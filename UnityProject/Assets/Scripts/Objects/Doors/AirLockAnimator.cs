@@ -1,4 +1,5 @@
 using System.Collections;
+using AddressableReferences;
 using UnityEngine;
 #if UNITY_EDITOR
 using UnityEditor;
@@ -10,7 +11,7 @@ namespace Doors
 	[ExecuteInEditMode]
 	public class AirLockAnimator : DoorAnimator
 	{
-		//fix replace the hardcoded animation sizes;
+		// TODO: FIXME: replace the hardcoded animation sizes;
 		public int animSize;
 
 		public SpriteRenderer doorbase;
@@ -22,16 +23,15 @@ namespace Doors
 
 		public Sprite[] overlaySprites;
 
-		//animations
+		public AddressableAudioSource TripleBeep;
+
+		// animations
 		public override void AccessDenied(bool skipAnimation)
 		{
-			if (skipAnimation)
-			{
-				//do nothing
-				return;
-			}
+			if (skipAnimation) return;
+
 			doorController.isPerformingAction = true;
-			SoundManager.PlayAtPosition("AccessDenied", transform.position, gameObject);
+			_ = SoundManager.PlayAtPosition(SingletonSOSounds.Instance.AccessDenied, transform.position, gameObject);
 
 			// check if door uses a simple denied animation (flashes 1 frame on and off)
 			if (doorController.useSimpleDeniedAnimation)
@@ -54,21 +54,17 @@ namespace Doors
 
 		public override void PressureWarn(bool skipAnimation)
 		{
-			if (skipAnimation)
-			{
-				//do nothing
-				return;
-			}
+			if (skipAnimation) return;
 
 			doorController.isPerformingAction = true;
-			SoundManager.PlayAtPosition("TripleBeep", transform.position, gameObject, polyphonic: true, isGlobal: true);
+			_ = SoundManager.PlayAtPosition(TripleBeep, transform.position, gameObject, polyphonic: true, isGlobal: true);
 			StartCoroutine(PlayPressureWarnAnim());
 		}
 
 		public override void OpenDoor(bool skipAnimation)
 		{
 			doorController.isPerformingAction = true;
-			if (!skipAnimation)
+			if (skipAnimation == false)
 			{
 				doorController.PlayOpenSound();
 			}
@@ -83,7 +79,7 @@ namespace Doors
 				// check if door uses a simple light animation (turn on 1 frame, turn it off at the end)
 				if (doorController.useSimpleLightAnimation)
 				{
-					if (!skipAnimation)
+					if (skipAnimation == false)
 					{
 						StartCoroutine(PlaySimpleLightAnim());
 					}
@@ -108,7 +104,7 @@ namespace Doors
 				StartCoroutine(PlayAnim(overlay_Glass, overlaySprites, doorController.DoorCoverSpriteOffset, skipToEnd: skipAnimation));
 			}
 
-			//mabe the boxColliderStuff should be on the DoorController.
+			// maybe the boxColliderStuff should be on the DoorController.
 			StartCoroutine(MakePassable(skipAnimation));
 		}
 
@@ -221,7 +217,7 @@ namespace Doors
 				{
 					if (doorbase.isVisible)
 					{
-						EventManager.Broadcast(EVENT.UpdateFov);
+						EventManager.Broadcast(Event.UpdateFov);
 					}
 				}
 				if (updateAction)

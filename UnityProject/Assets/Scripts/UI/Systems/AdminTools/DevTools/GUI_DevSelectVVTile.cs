@@ -1,4 +1,5 @@
 ﻿using DatabaseAPI;
+using Messages.Client.VariableViewer;
 using UnityEngine;
 using UnityEngine.EventSystems;
 using UnityEngine.UI;
@@ -23,6 +24,8 @@ public class GUI_DevSelectVVTile : MonoBehaviour
 	private EscapeKeyTarget escapeKeyTarget;
 
 	private LightingSystem lightingSystem;
+	private bool cachedLightingState;
+
 	public LightingSystem LightingSystem
 	{
 		get
@@ -58,14 +61,14 @@ public class GUI_DevSelectVVTile : MonoBehaviour
 		{
 			statusText.text = "Click to select object to view (ESC to Cancel)";
 			UIManager.IsMouseInteractionDisabled = true;
+			cachedLightingState = LightingSystem.enabled;
 			LightingSystem.enabled = false;
-
 		}
 		else if (newState == State.INACTIVE)
 		{
 			statusText.text = "Click to select object to view (ESC to Cancel)";
 			UIManager.IsMouseInteractionDisabled = false;
-			LightingSystem.enabled = true;
+			LightingSystem.enabled = cachedLightingState;
 			gameObject.SetActive(false);
 		}
 		state = newState;
@@ -100,7 +103,7 @@ public class GUI_DevSelectVVTile : MonoBehaviour
 			}
 			if (CommonInput.GetMouseButtonDown(0))
 			{
-				RequestToViewObjectsAtTile.Send(Camera.main.ScreenToWorldPoint(CommonInput.mousePosition),
+				RequestToViewObjectsAtTile.Send(MouseUtils.MouseToWorldPos(),
 					ServerData.UserID, PlayerList.Instance.AdminToken);
 				OnEscape();
 			}

@@ -3,42 +3,48 @@ using System.Collections.Generic;
 using UnityEngine;
 using Systems.Atmospherics;
 using Objects.Atmospherics;
+using System.Text;
+using Pipes;
 
 namespace Items.Atmospherics
 {
-	public class AtmosphericAnalyser : MonoBehaviour, IInteractable<HandActivate>, ICheckedInteractable<PositionalHandApply>
+	public class AtmosphericAnalyser : MonoBehaviour, ICheckedInteractable<HandActivate>, IInteractable<PositionalHandApply>
 	{
+		public bool WillInteract(HandActivate interaction, NetworkSide side)
+		{
+			if (DefaultWillInteract.Default(interaction, side) == false) return false;
+
+			return true;
+		}
+
 		public void ServerPerformInteraction(HandActivate interaction)
 		{
-			string toShow = "";
 			var metaDataLayer = MatrixManager.AtPoint(interaction.PerformerPlayerScript.registerTile.WorldPositionServer, true).MetaDataLayer;
 			if (metaDataLayer != null)
 			{
 				var node = metaDataLayer.Get(interaction.Performer.transform.localPosition.RoundToInt());
 				if (node != null)
 				{
-					toShow = GetGasMixInfo(node.GasMix);
+					Chat.AddExamineMsgFromServer(interaction.Performer, GetGasMixInfo(node.GasMix));
 				}
 			}
-
-			Chat.AddExamineMsgFromServer(interaction.Performer, toShow);
-		}
-
-		public bool WillInteract(PositionalHandApply interaction, NetworkSide side)
-		{
-			if (interaction.HandObject == null) return false;
-			if (Validations.IsReachableByPositions(interaction.PerformerPlayerScript.WorldPos, interaction.WorldPositionTarget,
-				side == NetworkSide.Server) == false) return false;
-			return true;
 		}
 
 		public void ServerPerformInteraction(PositionalHandApply interaction)
 		{
+			if (interaction.TargetObject == gameObject) return;
+
 			if (interaction.TargetObject != null)
 			{
 				if (interaction.TargetObject.TryGetComponent(out GasContainer container))
 				{
 					Chat.AddExamineMsgFromServer(interaction.Performer, GetGasMixInfo(container.GasMix));
+					return;
+				}
+
+				if (interaction.TargetObject.TryGetComponent(out MonoPipe monoPipe))
+				{
+					Chat.AddExamineMsgFromServer(interaction.Performer, GetGasMixInfo(monoPipe.pipeData.mixAndVolume.GetGasMix()));
 					return;
 				}
 			}
@@ -55,24 +61,24 @@ namespace Items.Atmospherics
 			}
 		}
 
-		private string GetGasMixInfo(GasMix gasMix)
+		private static string GetGasMixInfo(GasMix gasMix)
 		{
-			string info = $"Pressure: {gasMix.Pressure:0.###} kPa\n" +
-					$"Temperature: {gasMix.Temperature:0.###} K ({gasMix.Temperature - Reactions.KOffsetC:0.###} °C)\n" +
+			StringBuilder sb = new StringBuilder(
+					$"Pressure: {gasMix.Pressure:0.###} kPa, {gasMix.Moles:0.##} moles\n" +
+					$"Temperature: {gasMix.Temperature:0.##} K ({gasMix.Temperature - Reactions.KOffsetC:0.##} °C)\n");
 					// You want Fahrenheit? HAHAHAHA
-					$"Total mols of gas: {gasMix.Moles:0.###}\n";
 
-			foreach (var gas in Gas.All)
+			foreach (var gas in gasMix.GasesArray)
 			{
-				var ratio = gasMix.GasRatio(gas);
+				var ratio = gasMix.GasRatio(gas.GasSO);
 
-				if (ratio != 0)
+				if (ratio.Approx(0) == false)
 				{
-					info += $"{gas.Name}: {ratio * 100:0.###} %\n";
+					sb.AppendLine($"{gas.GasSO.Name}: {ratio:P}");
 				}
 			}
 
-			return info;
+			return $"</i>{sb}<i>";
 		}
 	}
 }

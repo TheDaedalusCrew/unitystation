@@ -1,6 +1,9 @@
 using System;
 using System.Collections;
 using System.Collections.Generic;
+using Items;
+using AddressableReferences;
+using Messages.Server;
 using UnityEngine;
 using Mirror;
 using Random = UnityEngine.Random;
@@ -18,8 +21,8 @@ public class EnergySword : NetworkBehaviour, ICheckedInteractable<HandActivate>,
 	private ItemSize offSize;
 
 	[SerializeField]
-	private string activatedHitSound = "blade1";
-	private string offHitSound;
+	private AddressableAudioSource activatedHitSound = null;
+	private AddressableAudioSource offHitSound;
 
 	[SerializeField]
 	[Range(0, 100)]
@@ -45,6 +48,10 @@ public class EnergySword : NetworkBehaviour, ICheckedInteractable<HandActivate>,
 
 	[SyncVar(hook = nameof(SyncState))]
 	private bool isActivated;
+
+	public AddressableAudioSource saberon;
+
+	public AddressableAudioSource saberoff;
 
 	#region Lifecycle
 
@@ -99,13 +106,6 @@ public class EnergySword : NetworkBehaviour, ICheckedInteractable<HandActivate>,
 
 	public void ServerPerformInteraction(HandActivate interaction)
 	{
-		ServerToggleState(interaction);
-	}
-
-	#endregion Interaction-ToggleState
-
-	private void ServerToggleState(HandActivate interaction)
-	{
 		isActivated = !isActivated; // This runs SyncState, which sets itemAttributes on clients
 		var lightColor = GetLightSourceColor(color);
 		lightControl.SetColor(lightColor);
@@ -125,16 +125,13 @@ public class EnergySword : NetworkBehaviour, ICheckedInteractable<HandActivate>,
 		}
 
 		SoundManager.PlayNetworkedAtPos(
-				isActivated ? "saberon" : "saberoff", gameObject.AssumedWorldPosServer());
-		StartCoroutine(DelayCharacterSprite(interaction));
-	}
+			isActivated ? saberon : saberoff, gameObject.AssumedWorldPosServer());
 
-	// Cheap hack until networked character sprites.
-	private IEnumerator DelayCharacterSprite(HandActivate interaction)
-	{
-		yield return WaitFor.Seconds(1);
 		PlayerAppearanceMessage.SendToAll(interaction.Performer, (int)interaction.HandSlot.NamedSlot.GetValueOrDefault(NamedSlot.none), gameObject);
 	}
+
+	#endregion Interaction-ToggleState
+
 
 	#region Interaction-AdjustColor
 

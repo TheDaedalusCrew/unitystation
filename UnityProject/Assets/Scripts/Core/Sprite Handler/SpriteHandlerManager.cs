@@ -1,81 +1,137 @@
 ﻿using System;
 using System.Collections;
 using System.Collections.Generic;
-using System.Data.Common;
+using Messages.Client.SpriteMessages;
+using Messages.Server.SpritesMessages;
 using Mirror;
 using UnityEngine;
+using UnityEngine.SceneManagement;
 
 public class SpriteHandlerManager : NetworkBehaviour
 {
-	//public static int AvailableID = 1;
-
 	private static SpriteHandlerManager spriteHandlerManager;
-	public static SpriteHandlerManager Instance
-	{
-		get
-		{
-			if (!spriteHandlerManager)
-			{
-				spriteHandlerManager = FindObjectOfType<SpriteHandlerManager>();
-			}
+	public static SpriteHandlerManager Instance => spriteHandlerManager;
 
-			return spriteHandlerManager;
-		}
-	}
-
-
-
-	public Dictionary<NetworkIdentity, Dictionary<string, SpriteHandler>> PresentSprites =
+	public static Dictionary<NetworkIdentity, Dictionary<string, SpriteHandler>> PresentSprites =
 		new Dictionary<NetworkIdentity, Dictionary<string, SpriteHandler>>();
 
 	public Dictionary<SpriteHandler, SpriteChange> QueueChanges = new Dictionary<SpriteHandler, SpriteChange>();
 
 	public Dictionary<SpriteHandler, SpriteChange> NewClientChanges = new Dictionary<SpriteHandler, SpriteChange>();
 
+	private void Awake()
+	{
+		if (spriteHandlerManager == null)
+		{
+			spriteHandlerManager = this;
+		}
+		else
+		{
+			Destroy(this);
+		}
+	}
+
+	private void OnEnable()
+	{
+		SceneManager.activeSceneChanged += OnRoundRestart;
+	}
+
+	private void OnDisable()
+	{
+		SceneManager.activeSceneChanged -= OnRoundRestart;
+	}
+
+	void OnRoundRestart(Scene oldScene, Scene newScene)
+	{
+		QueueChanges.Clear();
+		NewClientChanges.Clear();
+		PresentSprites.Clear();
+		SpriteUpdateMessage.UnprocessedData.Clear();
+	}
+
+	public static void UnRegisterHandler(NetworkIdentity networkIdentity, SpriteHandler spriteHandler)
+	{
+		if (spriteHandler == null) return;
+		if (networkIdentity == null)
+		{
+			if (spriteHandler?.transform?.parent != null)
+			{
+				Logger.LogError(" RegisterHandler networkIdentity is null on  > " + spriteHandler.transform.parent.name,
+					Category.Sprites);
+				return;
+			}
+			else
+			{
+				Logger.LogError(" RegisterHandler networkIdentity is null on  ? ",
+					Category.Sprites);
+			}
+
+		}
+
+		if (PresentSprites.ContainsKey(networkIdentity))
+		{
+			if (PresentSprites[networkIdentity].ContainsKey(spriteHandler.name))
+			{
+				PresentSprites[networkIdentity].Remove(spriteHandler.name);
+			}
+		}
+	}
+
+
 	public static void RegisterHandler(NetworkIdentity networkIdentity, SpriteHandler spriteHandler)
 	{
 		if (networkIdentity == null)
 		{
-			Logger.LogError(" RegisterHandler networkIdentity is null on  > " + spriteHandler.transform.parent.name,
-				Category.SpriteHandler);
-			return;
-		}
-
-
-		if (Instance.PresentSprites.ContainsKey(networkIdentity) == false)
-		{
-			Instance.PresentSprites[networkIdentity] = new Dictionary<string, SpriteHandler>();
-		}
-
-		if (Instance.PresentSprites[networkIdentity].ContainsKey(spriteHandler.name))
-		{
-			if (Instance.PresentSprites[networkIdentity][spriteHandler.name] != spriteHandler)
+			if (spriteHandler?.transform?.parent != null)
 			{
-				Logger.LogError(
-					"SpriteHandler has the same name as another SpriteHandler on the game object > " +
-					spriteHandler.transform.parent.name + " with Net ID of " +  networkIdentity.netId , Category.SpriteHandler);
+				Logger.LogError(" RegisterHandler networkIdentity is null on  > " + spriteHandler.transform.parent.name,
+					Category.Sprites);
+				return;
+			}
+			else
+			{
+				Logger.LogError(" RegisterHandler networkIdentity is null on  ? ",
+					Category.Sprites);
 			}
 		}
 
-		Instance.PresentSprites[networkIdentity][spriteHandler.name] = spriteHandler;
-	}
 
+		if (PresentSprites.ContainsKey(networkIdentity) == false)
+		{
+			PresentSprites[networkIdentity] = new Dictionary<string, SpriteHandler>();
+		}
 
-	// Start is called before the first frame update
-	void Start()
-	{
-		//AvailableID = 1;
-		//foreach (var Product in SpriteCatalogue.Instance.Catalogue)
-		//{
-			//Product.ID = AvailableID;
-			//AvailableID++;
-		//}
+		if (PresentSprites[networkIdentity].ContainsKey(spriteHandler.name))
+		{
+			if (PresentSprites[networkIdentity][spriteHandler.name] != spriteHandler)
+			{
+				Logger.LogError(
+					"SpriteHandler has the same name as another SpriteHandler on the game object > " + spriteHandler.name + " On parent > " +
+					spriteHandler.transform.parent.name + " with Net ID of " +  networkIdentity.netId , Category.Sprites);
+			}
+		}
+
+		PresentSprites[networkIdentity][spriteHandler.name] = spriteHandler;
 	}
 
 	public void UpdateNewPlayer(NetworkConnection requestedBy)
 	{
 		SpriteUpdateMessage.SendToSpecified(requestedBy, NewClientChanges);
 	}
+
+	public void ClientRequestForceUpdate(List<SpriteHandler> Specifyed ,NetworkConnection requestedBy)
+	{
+		var Newtem = new Dictionary<SpriteHandler, SpriteHandlerManager.SpriteChange>();
+		foreach (var SH in Specifyed)
+		{
+			if (NewClientChanges.ContainsKey(SH))
+			{
+				Newtem[SH] = NewClientChanges[SH];
+			}
+		}
+		SpriteUpdateMessage.SendToSpecified(requestedBy, Newtem);
+	}
+
 
 	public override void OnStartClient()
 	{
@@ -127,35 +183,35 @@ public class SpriteHandlerManager : NetworkBehaviour
 		QueueChanges.Clear();
 	}
 
-	public static NetworkBehaviour GetRecursivelyANetworkBehaviour(GameObject gameObject)
+	//Ignore startingGameObject when calling externally, as its used internally in this functions recursion
+	public static NetworkIdentity GetRecursivelyANetworkBehaviour(GameObject gameObject, GameObject startingGameObject = null)
 	{
 		if (gameObject == null)
 		{
 			return null;
 		}
-		var Net = gameObject.GetComponent<NetworkBehaviour>();
+
+		var Net = gameObject.GetComponent<NetworkIdentity>();
 		if (Net != null)
 		{
 			return (Net);
 		}
-		else if (gameObject.transform.parent != null)
+
+		if (startingGameObject == null)
 		{
-			return GetRecursivelyANetworkBehaviour(gameObject.transform.parent.gameObject);
+			startingGameObject = gameObject;
 		}
-		else
+
+		if (gameObject.transform.parent != null)
 		{
-			Logger.LogError("Was unable to find A NetworkBehaviour for? yeah Youll have to look at this stack trace",
-				Category.SpriteHandler);
-			return null;
+			return GetRecursivelyANetworkBehaviour(gameObject.transform.parent.gameObject, startingGameObject);
 		}
+
+		Logger.LogError($"Was unable to find A NetworkBehaviour for {startingGameObject.ExpensiveName()} Parent: {startingGameObject.transform.parent.OrNull()?.gameObject.ExpensiveName()}" +
+		                $"Parent Parent: {startingGameObject.transform.parent.OrNull()?.parent.OrNull()?.gameObject.ExpensiveName()}",
+			Category.Sprites);
+		return null;
 	}
-
-
-	// Update is called once per frame
-	void Update()
-	{
-	}
-
 
 	public static List<SpriteChange> PooledSpriteChange = new List<SpriteChange>();
 
@@ -186,9 +242,10 @@ public class SpriteHandlerManager : NetworkBehaviour
 		public bool PushTexture = false;
 		public bool Empty = false;
 		public bool PushClear = false;
-		public bool ClearPallet = false;
+		public bool ClearPalette = false;
 		public Color? SetColour = null;
-		public List<Color> Pallet = null;
+		public List<Color> Palette = null;
+		public bool AnimateOnce = false;
 
 		public void Clean()
 		{
@@ -198,9 +255,10 @@ public class SpriteHandlerManager : NetworkBehaviour
 			PushTexture = false;
 			Empty = false;
 			PushClear = false;
-			ClearPallet = false;
+			ClearPalette = false;
 			SetColour = null;
-			Pallet = null;
+			Palette = null;
+			AnimateOnce = false;
 		}
 
 
@@ -234,10 +292,10 @@ public class SpriteHandlerManager : NetworkBehaviour
 				Empty = spriteChange.Empty;
 			}
 
-			if (spriteChange.ClearPallet)
+			if (spriteChange.ClearPalette)
 			{
-				if (Pallet != null) Pallet = null;
-				ClearPallet = spriteChange.ClearPallet;
+				if (Palette != null) Palette = null;
+				ClearPalette = spriteChange.ClearPalette;
 			}
 
 			if (spriteChange.PushClear)
@@ -246,15 +304,21 @@ public class SpriteHandlerManager : NetworkBehaviour
 				PushClear = spriteChange.PushClear;
 			}
 
+			if (spriteChange.AnimateOnce)
+			{
+				if (AnimateOnce) AnimateOnce = false;
+				AnimateOnce = spriteChange.AnimateOnce;
+			}
+
 			if (spriteChange.SetColour != null)
 			{
 				SetColour = spriteChange.SetColour;
 			}
 
-			if (spriteChange.Pallet != null)
+			if (spriteChange.Palette != null)
 			{
-				if (ClearPallet) ClearPallet = false;
-				Pallet = spriteChange.Pallet;
+				if (ClearPalette) ClearPalette = false;
+				Palette = spriteChange.Palette;
 			}
 
 			if (pool)

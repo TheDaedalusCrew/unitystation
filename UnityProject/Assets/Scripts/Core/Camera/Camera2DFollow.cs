@@ -50,7 +50,7 @@ public class Camera2DFollow : MonoBehaviour
 	public Transform target;
 	public float xOffset = 4f;
 
-    public GameObject stencilMask;
+	public GameObject stencilMask;
 
 	[HideInInspector]
 	public LightingSystem lightingSystem;
@@ -79,15 +79,16 @@ public class Camera2DFollow : MonoBehaviour
 		{
 			lastTargetPosition = target.position;
 			offsetZ = (transform.position - target.position).z;
-        }
+		}
 		transform.parent = null;
 		starsBackground.parent = null;
 	}
 
+	//idk I don't know probably should look into the sometime TODO look into this
 	public void SetCameraXOffset()
 	{
 		float xOffSet =
-			(transform.position.x - Camera.main.ScreenToWorldPoint(UIManager.Hands.transform.position).x) * 1.38f;
+			(transform.position.x - Camera.main.ScreenToWorldPoint(UIManager.Instance.transform.position).x) * 1.38f;
 
 		followControl.SetXOffset(xOffSet);
 	}
@@ -178,12 +179,12 @@ public class Camera2DFollow : MonoBehaviour
 		}
 	}
 
-    public void SetXOffset(float offset)
-    {
-        xOffset = offset;
-    }
+	public void SetXOffset(float offset)
+	{
+		xOffset = offset;
+	}
 
-    public void LookAheadTemp(float newLookAhead)
+	public void LookAheadTemp(float newLookAhead)
 	{
 		lookAheadFactor = newLookAhead;
 		StartCoroutine(LookAheadSwitch());

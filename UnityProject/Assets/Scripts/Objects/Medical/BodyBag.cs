@@ -58,9 +58,9 @@ namespace Objects.Medical
 			//TODO: This means that body bag integrity gets reset every time it is picked up. Should be converted to be the same object instead.
 			var folded = Spawn.ServerPrefab(prefabVariant).GameObject;
 			Inventory.ServerAdd(folded,
-				interaction.Performer.GetComponent<ItemStorage>().GetActiveHandSlot());
+				interaction.Performer.GetComponent<DynamicItemStorage>().GetActiveHandSlot());
 			// Remove from world
-			Despawn.ServerSingle(gameObject);
+			_ = Despawn.ServerSingle(gameObject);
 		}
 
 		public RightClickableResult GenerateRightClickOptions()

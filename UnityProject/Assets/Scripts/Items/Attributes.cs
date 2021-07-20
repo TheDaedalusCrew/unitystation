@@ -1,7 +1,5 @@
-using System;
-using System.Collections;
-using System.Collections.Generic;
 using System.Linq;
+using Messages.Client.Interaction;
 using UnityEngine;
 using Mirror;
 
@@ -13,7 +11,7 @@ public class Attributes : NetworkBehaviour, IRightClickable, IExaminable
 
 	[Tooltip("Display name of this item when spawned.")]
 	[SerializeField]
-	public string initialName = null;
+	private string initialName = null;
 
 	[SyncVar(hook = nameof(SyncArticleName))]
 	private string articleName;
@@ -28,7 +26,7 @@ public class Attributes : NetworkBehaviour, IRightClickable, IExaminable
 
 	[Tooltip("Description of this item when spawned.")]
 	[SerializeField]
-	public string initialDescription = null;
+	private string initialDescription = null;
 
 	[Tooltip("Will this item highlight on mouseover?")]
 	[SerializeField]
@@ -37,20 +35,19 @@ public class Attributes : NetworkBehaviour, IRightClickable, IExaminable
 	[Tooltip("How much does one of these sell for when shipped on the cargo shuttle?")]
 	[SerializeField]
 	private int exportCost = 0;
+
 	public int ExportCost
 	{
 		get
 		{
-			var stackable = GetComponent<Stackable>();
-
-			if (stackable != null)
+			if (TryGetComponent<Stackable>(out var stackable))
 			{
-				return exportCost * stackable.Amount;
+				int amount = Application.isEditor ? stackable.InitialAmount : stackable.Amount;
+				return exportCost * amount;
 			}
 
 			return exportCost;
 		}
-
 	}
 
 	[Tooltip("Should an alternate name be used when displaying this in the cargo console report?")]
@@ -62,6 +59,12 @@ public class Attributes : NetworkBehaviour, IRightClickable, IExaminable
 	[SerializeField]
 	private string exportMessage = null;
 	public string ExportMessage => exportMessage;
+
+	[Server]
+	public void SetExportCost(int value)
+	{
+		exportCost = value;
+	}
 
 	[SyncVar(hook = nameof(SyncArticleDescription))]
 	private string articleDescription;

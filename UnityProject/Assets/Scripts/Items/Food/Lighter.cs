@@ -104,10 +104,10 @@ public class Lighter : NetworkBehaviour, ICheckedInteractable<HandActivate>,
 
 					// AttackType.Fire will set character on fire
 					player.playerHealth?.
-						ApplyDamageToBodypart(gameObject, 5f, AttackType.Energy, DamageType.Burn, bodyPart);
+						ApplyDamageToBodyPart(gameObject, 5f, AttackType.Energy, DamageType.Burn, bodyPart);
 
-					var they = player.characterSettings.TheyPronoun();
-					var their = player.characterSettings.TheirPronoun();
+					var they = player.characterSettings.TheyPronoun(player);
+					var their = player.characterSettings.TheirPronoun(player);
 
 					Chat.AddActionMsgToChat(player.gameObject,
 						$"You burn yourself while lighting the lighter!",
@@ -119,7 +119,7 @@ public class Lighter : NetworkBehaviour, ICheckedInteractable<HandActivate>,
 		{
 			if (isFancy)
 			{
-				var theyre = player.characterSettings.TheyrePronoun();
+				var theyre = player.characterSettings.TheyrePronoun(player);
 				Chat.AddActionMsgToChat(player.gameObject,
 					$"You quietly shut off {lighterName} without even looking at what you're doing. Wow.",
 					$"You hear a quiet click, as {playerName} shuts off {lighterName} without even looking at what {theyre} doing. Wow.");
@@ -135,16 +135,18 @@ public class Lighter : NetworkBehaviour, ICheckedInteractable<HandActivate>,
 
 	private bool CheckGlovesProtection(PlayerScript player)
 	{
-		if (player && player.ItemStorage)
+		if (player && player.DynamicItemStorage)
 		{
-			var playerEquipment = player.ItemStorage;
-			var gloves = playerEquipment.GetNamedItemSlot(NamedSlot.hands);
-
-			if (gloves != null && gloves.IsOccupied)
+			var playerEquipment = player.DynamicItemStorage;
+			foreach (var itemSlot in playerEquipment.GetNamedItemSlots(NamedSlot.hands))
 			{
-				// TODO: need aditional check to heat resistence and gloves trait
-				return true;
+				if (itemSlot != null && itemSlot.IsOccupied)
+				{
+					// TODO: need aditional check to heat resistence and gloves trait
+					return true;
+				}
 			}
+
 		}
 
 		return false;

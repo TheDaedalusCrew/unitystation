@@ -42,6 +42,8 @@ namespace TileManagement
 		public Layer[] LayersValues { get; private set; }
 		public ObjectLayer ObjectLayer { get; private set; }
 
+		//Determines the maximum amount of overlays allowed on a tile
+		private const int OVERLAY_LIMIT = 20;
 
 		public List<Layer> ffLayersValues;
 
@@ -83,6 +85,7 @@ namespace TileManagement
 
 			foreach (Layer layer in GetComponentsInChildren<Layer>(true))
 			{
+				layer.metaTileMap = this;
 				var type = layer.LayerType;
 				Layers[type] = layer;
 				layersKeys.Add(type);
@@ -183,6 +186,7 @@ namespace TileManagement
 					}
 
 					QueueTileChange.PresentlyOn.RemoveTile(QueueTileChange.TileCoordinates);
+
 					// remember update transforms and position and colour when removing On tile map I'm assuming It doesn't clear it?
 					QueueTileChange.Clean();
 					lock (PooledTileLocation)
@@ -203,6 +207,11 @@ namespace TileManagement
 			}
 
 			stopwatch.Stop();
+
+			foreach (var layer in LayersValues)
+			{
+				layer.overlayStore.Clear();
+			}
 		}
 
 		/// <summary>
@@ -214,7 +223,7 @@ namespace TileManagement
 			AttackType attackType = AttackType.Melee)
 		{
 			//still needs to be done
-			TileLocation TileLcation = null;
+			//TileLocation TileLcation = null;
 			float RemainingDamage = damage;
 			foreach (var damageableLayer in DamageableLayers)
 			{
@@ -223,10 +232,10 @@ namespace TileManagement
 					return (damage);
 				}
 
-				lock (PresentTiles)
-				{
-					PresentTiles[damageableLayer].TryGetValue(cellPos, out TileLcation);
-				}
+				// lock (PresentTiles)
+				// {
+				// 	PresentTiles[damageableLayer].TryGetValue(cellPos, out TileLcation);
+				// }
 
 				RemainingDamage -= damageableLayer.TilemapDamage.ApplyDamage(damage, attackType, worldPos);
 			}
@@ -261,11 +270,13 @@ namespace TileManagement
 						   excludeTiles, ignoreObjects, isReach: isReach) &&
 					   IsPassableAtOrthogonal(toX, to, isServer, collisionType, inclPlayers, context, excludeLayers, excludeTiles, ignoreObjects, isReach: isReach);
 
+				if (isPassableIfHorizontalFirst) return true;
+
 				bool isPassableIfVerticalFirst = IsPassableAtOrthogonal(origin, toY, isServer, collisionType, inclPlayers, context, diagonalExcludes,
 						   excludeTiles, ignoreObjects, isReach: isReach) &&
 					   IsPassableAtOrthogonal(toY, to, isServer, collisionType, inclPlayers, context, excludeLayers, excludeTiles, ignoreObjects, isReach: isReach);
 
-				return isPassableIfHorizontalFirst || isPassableIfVerticalFirst;
+				return isPassableIfVerticalFirst;
 			}
 
 		}
@@ -283,23 +294,25 @@ namespace TileManagement
 			TileLocation TileLcation = null;
 			for (var i = 0; i < SolidLayersValues.Length; i++)
 			{
+				var solidLayer = SolidLayersValues[i];
+
 				// Skip floor & base collisions if this is not a shuttle
 				if (collisionType != CollisionType.Shuttle &&
-				    (SolidLayersValues[i].LayerType == LayerType.Floors ||
-				     SolidLayersValues[i].LayerType == LayerType.Base))
+				    (solidLayer.LayerType == LayerType.Floors ||
+				     solidLayer.LayerType == LayerType.Base))
 				{
 					continue;
 				}
 
 				// Skip if the current tested layer is being excluded.
-				if (excludeLayers != null && excludeLayers.Contains(SolidLayersValues[i].LayerType))
+				if (excludeLayers != null && excludeLayers.Contains(solidLayer.LayerType))
 				{
 					continue;
 				}
 
 				lock (PresentTiles)
 				{
-					PresentTiles[SolidLayersValues[i]].TryGetValue(to, out TileLcation);
+					PresentTiles[solidLayer].TryGetValue(to, out TileLcation);
 				}
 
 				if (TileLcation?.Tile == null) continue;
@@ -313,17 +326,6 @@ namespace TileManagement
 				{
 					return false;
 				}
-
-				// if ((TileLcation.Tile as BasicTile).IsAtmosPassable() == false)
-				// {
-				// return false;
-				// }
-
-				// if (!SolidLayersValues[i].IsPassableAt(origin, to, isServer, collisionType: collisionType,
-				// inclPlayers: inclPlayers, context: context, excludeTiles))
-				// {
-				// return false;
-				// }
 			}
 
 			return true;
@@ -360,23 +362,41 @@ namespace TileManagement
 				}
 
 				if (TileLcation?.Tile == null) continue;
-				if ((TileLcation.Tile as BasicTile).IsAtmosPassable() == false)
+				if ((TileLcation.Tile as BasicTile)?.IsAtmosPassable() == false)
 				{
 					return false;
 				}
 			}
-
 			return true;
-			// for (var i = 0; i < LayersValues.Length; i++)
-			// {
-			// if (!LayersValues[i].IsAtmosPassableAt(origin, to, isServer))
-			// {
-			// return false;
-			// }
-			// }
-
-			// return true;
 		}
+
+		public bool IsConstructable(Vector3Int position)
+		{
+			TileLocation tileLocation = null;
+			var canConstruct = false;
+			foreach (var layer in LayersValues)
+			{
+				if (layer.LayerType == LayerType.Objects)
+					continue;
+
+				lock (PresentTiles)
+				{
+					PresentTiles[layer].TryGetValue(position, out tileLocation);
+				}
+
+				if (tileLocation?.Tile == null)
+					continue;
+
+				if ((tileLocation.Tile as BasicTile)?.constructable == false)
+				{
+					canConstruct = false;
+					break;
+				}
+				canConstruct = true;
+			}
+			return canConstruct;
+		}
+
 
 		public bool IsSpaceAt(Vector3Int position, bool isServer)
 		{
@@ -391,23 +411,12 @@ namespace TileManagement
 				}
 
 				if (TileLcation?.Tile == null) continue;
-				if ((TileLcation.Tile as BasicTile).IsSpace() == false)
+				if ((TileLcation.Tile as BasicTile)?.IsSpace() == false)
 				{
 					return false;
 				}
 			}
-
 			return true;
-
-			// for (var i = 0; i < LayersValues.Length; i++)
-			// {
-			// if (!LayersValues[i].IsSpaceAt(position, isServer))
-			// {
-			// return false;
-			// }
-			// }
-
-			// return true;
 		}
 
 		public bool IsTableAt(Vector3Int position)
@@ -416,12 +425,7 @@ namespace TileManagement
 			{
 				return layer.GetTile(position);
 			}
-
 			return false;
-
-			// var ObjectTile = ObjectLayer.GetTile(position);
-			// if (ObjectTile == null) return false;
-			// return ObjectTile.TileType == TileType.Table;
 		}
 
 		public bool IsTileTypeAt(Vector3Int position, TileType tileType)
@@ -439,11 +443,11 @@ namespace TileManagement
 			return false;
 		}
 
-		public void SetTile(Vector3Int position, LayerTile tile, Matrix4x4? matrixTransform = null, Color? color = null)
+		public void SetTile(Vector3Int position, LayerTile tile, Matrix4x4? matrixTransform = null, Color? color = null, bool isPlaying = true)
 		{
 			if (Layers.TryGetValue(tile.LayerType, out var layer))
 			{
-				if (Application.isPlaying == false)
+				if (isPlaying == false) //is the game playing or is this the levelbrush?
 				{
 					layer.SetTile(position, tile,
 						matrixTransform.GetValueOrDefault(Matrix4x4.identity),
@@ -470,7 +474,6 @@ namespace TileManagement
 					TileLcation.PresentlyOn = layer;
 					TileLcation.PresentMetaTileMap = this;
 					TileLcation.TileCoordinates = position;
-
 					TileLcation.Tile = tile;
 					TileLcation.TransformMatrix = matrixTransform.GetValueOrDefault(Matrix4x4.identity);
 					TileLcation.Colour = color.GetValueOrDefault(Color.white);
@@ -541,6 +544,35 @@ namespace TileManagement
 				}
 
 				return TileLcation?.Tile;
+				//return layer.GetTile(cellPosition);
+			}
+			else
+			{
+				LogMissingLayer(cellPosition, layerType);
+			}
+
+			return null;
+		}
+
+		/// <summary>
+		/// Gets the colour of the tile with the specified layer type at the specified cell position
+		/// </summary>
+		/// <param name="cellPosition">cell position within the tilemap to get the tile of. NOT the same
+		/// as world position.</param>
+		/// <param name="layerType"></param>
+		/// <returns></returns>
+		public Color? GetColour(Vector3Int cellPosition, LayerType layerType)
+		{
+			if (layerType == LayerType.Objects) return null;
+			if (Layers.TryGetValue(layerType, out var layer))
+			{
+				TileLocation TileLcation = null;
+				lock (PresentTiles)
+				{
+					PresentTiles[layer].TryGetValue(cellPosition, out TileLcation);
+				}
+
+				return TileLcation?.Colour;
 				//return layer.GetTile(cellPosition);
 			}
 			else
@@ -631,20 +663,7 @@ namespace TileManagement
 					break;
 				}
 			}
-
 			return TileLcation?.Tile;
-			// for (var i = 0; i < LayersValues.Length; i++)
-			// {
-			// LayerTile tile = LayersValues[i].GetTile(cellPosition);
-			// if (tile != null)
-			// {
-			// if (ignoreEffectsLayer && tile.LayerType == LayerType.Effects) continue;
-
-			// return tile;
-			// }
-			// }
-
-			// return null;
 		}
 
 		/// <summary>
@@ -672,21 +691,7 @@ namespace TileManagement
 					break;
 				}
 			}
-
 			return TileLcation?.Tile;
-
-			// for (var i = 0; i < LayersValues.Length; i++)
-			// {
-			// LayerTile tile = LayersValues[i].GetTile(cellPosition);
-			// if (tile != null)
-			// {
-			// if (LTSUtil.IsLayerIn(ExcludedLayers, tile.LayerType)) continue;
-
-			// return tile;
-			// }
-			// }
-
-			// return null;
 		}
 
 
@@ -823,18 +828,7 @@ namespace TileManagement
 					break;
 				}
 			}
-
 			return TileLcation?.Tile;
-
-			// for (var i = 0; i < LayersValues.Length; i++)
-			// {
-			// if (LayersValues[i].HasTile(position, isServer))
-			// {
-			// return true;
-			// }
-			// }
-
-			// return false;
 		}
 
 		/// <summary>
@@ -847,7 +841,7 @@ namespace TileManagement
 		{
 			if (layerType == LayerType.Objects)
 			{
-				Logger.LogError("Please use get objects instead of get tile");
+				Logger.LogError("Please use get objects instead of get tile", Category.TileMaps);
 				return false;
 			}
 
@@ -879,8 +873,323 @@ namespace TileManagement
 			return false;
 		}
 
+		/// <summary>
+		/// Gets the next free overlay position
+		/// </summary>
+		/// <param name="position"></param>
+		/// <param name="layerType"></param>
+		/// <param name="overlayName"></param>
+		/// <returns></returns>
+		public Vector3Int? GetFreeOverlayPos(Vector3Int position, LayerType layerType)
+		{
+			if (layerType == LayerType.Objects)
+			{
+				Logger.LogError("Please use get objects instead of get tile");
+				return null;
+			}
+
+			TileLocation tileLocation = null;
+			position.z = 1;
+
+			if (Layers.TryGetValue(layerType, out var layer))
+			{
+				//Go through overlays under the overlay limit. The first overlay checked will be at z = 1.
+				var count = 0;
+				while (count < OVERLAY_LIMIT)
+				{
+					lock (PresentTiles)
+					{
+						PresentTiles[layer].TryGetValue(position, out tileLocation);
+					}
+
+					if ((tileLocation == null || tileLocation.Tile == null) && layer.overlayStore.Contains(position) == false)
+					{
+						layer.overlayStore.Add(position);
+						return position;
+					}
+
+					position.z++;
+					count++;
+				}
+			}
+			else
+			{
+				LogMissingLayer(position, layerType);
+			}
+
+			return null;
+		}
+
+		/// <summary>
+		/// Gets all positions with a specific overlay type
+		/// </summary>
+		/// <param name="position"></param>
+		/// <param name="layerType"></param>
+		/// <param name="overlayName"></param>
+		/// <returns></returns>
+		public List<Vector3Int> GetOverlayPosByType(Vector3Int position, LayerType layerType, OverlayType overlayType)
+		{
+			if (layerType == LayerType.Objects)
+			{
+				Logger.LogError("Please use get objects instead of get tile");
+				return null;
+			}
+
+			TileLocation tileLocation = null;
+			OverlayTile overlayTile = null;
+			List<Vector3Int> pos = new List<Vector3Int>();
+			position.z = 1;
+
+			if (Layers.TryGetValue(layerType, out var layer))
+			{
+				//Go through overlays under the overlay limit. The first overlay checked will be at z = 1.
+				var count = 0;
+				while (count < OVERLAY_LIMIT)
+				{
+					lock (PresentTiles)
+					{
+						PresentTiles[layer].TryGetValue(position, out tileLocation);
+					}
+
+					if (tileLocation != null)
+					{
+						overlayTile = tileLocation.Tile as OverlayTile;
+
+						if (overlayTile != null && overlayTile.OverlayType == overlayType)
+						{
+							 pos.Add(position);
+						}
+					}
+
+					position.z++;
+					count++;
+				}
+			}
+			else
+			{
+				LogMissingLayer(position, layerType);
+			}
+
+			return pos;
+		}
+
+		/// <summary>
+		/// Get all overlay positions
+		/// </summary>
+		/// <param name="position"></param>
+		/// <param name="layerType"></param>
+		/// <param name="overlayName"></param>
+		/// <returns></returns>
+		public List<Vector3Int> GetAllOverlayPos(Vector3Int position, LayerType layerType)
+		{
+			if (layerType == LayerType.Objects)
+			{
+				Logger.LogError("Please use get objects instead of get tile");
+				return null;
+			}
+
+			TileLocation tileLocation = null;
+			OverlayTile overlayTile = null;
+			List<Vector3Int> pos = new List<Vector3Int>();
+			position.z = 1;
+
+			if (Layers.TryGetValue(layerType, out var layer))
+			{
+				//Go through overlays under the overlay limit. The first overlay checked will be at z = 1.
+				var count = 0;
+				while (count < OVERLAY_LIMIT)
+				{
+					lock (PresentTiles)
+					{
+						PresentTiles[layer].TryGetValue(position, out tileLocation);
+					}
+
+					if (tileLocation != null)
+					{
+						overlayTile = tileLocation.Tile as OverlayTile;
+
+						if (overlayTile != null)
+						{
+							pos.Add(position);
+						}
+					}
+
+					position.z++;
+					count++;
+				}
+			}
+			else
+			{
+				LogMissingLayer(position, layerType);
+			}
+
+			return pos;
+		}
+
+		/// <summary>
+		/// Gets all OverlayTiles with a specific overlay type at the cell position
+		/// </summary>
+		/// <param name="position"></param>
+		/// <param name="layerType"></param>
+		/// <param name="overlayType"></param>
+		/// <returns></returns>
+		public List<OverlayTile> GetOverlayTilesByType(Vector3Int position, LayerType layerType, OverlayType overlayType)
+		{
+			if (layerType == LayerType.Objects)
+			{
+				Logger.LogError("Please use get objects instead of get tile");
+				return null;
+			}
+
+			TileLocation tileLocation = null;
+			OverlayTile overlayTile = null;
+			List<OverlayTile> overlayTiles = new List<OverlayTile>();
+			position.z = 1;
+
+			if (Layers.TryGetValue(layerType, out var layer))
+			{
+				//Go through overlays under the overlay limit. The first overlay checked will be at z = 1.
+				var count = 0;
+				while (count < OVERLAY_LIMIT)
+				{
+					lock (PresentTiles)
+					{
+						PresentTiles[layer].TryGetValue(position, out tileLocation);
+					}
+
+					if (tileLocation != null)
+					{
+						overlayTile = tileLocation.Tile as OverlayTile;
+
+						if (overlayTile != null && overlayTile.OverlayType == overlayType)
+						{
+							overlayTiles.Add(overlayTile);
+						}
+					}
+
+					position.z++;
+					count++;
+				}
+			}
+			else
+			{
+				LogMissingLayer(position, layerType);
+			}
+
+			return overlayTiles;
+		}
+
+		/// <summary>
+		/// Whether a tile has this overlay already
+		/// </summary>
+		public bool HasOverlay(Vector3Int position, LayerType layerType, OverlayTile overlayTileWanted)
+		{
+			if (layerType == LayerType.Objects)
+			{
+				Logger.LogError("Please use get objects instead of get tile");
+				return false;
+			}
+
+			TileLocation tileLocation = null;
+			OverlayTile overlayTile = null;
+			position.z = 1;
+
+			if (Layers.TryGetValue(layerType, out var layer))
+			{
+				//Go through overlays under the overlay limit. The first overlay checked will be at z = 1.
+				var count = 0;
+				while (count < OVERLAY_LIMIT)
+				{
+					lock (PresentTiles)
+					{
+						PresentTiles[layer].TryGetValue(position, out tileLocation);
+					}
+
+					if (tileLocation != null)
+					{
+						overlayTile = tileLocation.Tile as OverlayTile;
+
+						if (overlayTile != null && overlayTile.Equals(overlayTileWanted))
+						{
+							return true;
+						}
+					}
+
+					position.z++;
+					count++;
+				}
+			}
+			else
+			{
+				LogMissingLayer(position, layerType);
+			}
+
+			return false;
+		}
+
+		/// <summary>
+		/// Whether a tile has this overlay already
+		/// </summary>
+		public bool HasOverlayOfType(Vector3Int position, LayerType layerType, OverlayType overlayTypeWanted)
+		{
+			if (layerType == LayerType.Objects)
+			{
+				Logger.LogError("Please use get objects instead of get tile");
+				return false;
+			}
+
+			TileLocation tileLocation = null;
+			OverlayTile overlayTile = null;
+			position.z = 1;
+
+			if (Layers.TryGetValue(layerType, out var layer))
+			{
+				//Go through overlays under the overlay limit. The first overlay checked will be at z = 1.
+				var count = 0;
+				while (count < OVERLAY_LIMIT)
+				{
+					lock (PresentTiles)
+					{
+						PresentTiles[layer].TryGetValue(position, out tileLocation);
+					}
+
+					if (tileLocation != null)
+					{
+						overlayTile = tileLocation.Tile as OverlayTile;
+
+						if (overlayTile != null && overlayTile.OverlayType == overlayTypeWanted)
+						{
+							return true;
+						}
+					}
+
+					position.z++;
+					count++;
+				}
+			}
+			else
+			{
+				LogMissingLayer(position, layerType);
+			}
+
+			return false;
+		}
+
+		public void NotifyRegisterTilePotentialMatrixChange(Vector3Int position)
+		{
+			if (Application.isPlaying && CustomNetworkManager.Instance._isServer)
+			{
+				foreach (var ServerObject in ObjectLayer.ServerObjects.Get(position))
+				{
+					ServerObject.customNetTransform.CheckMatrixSwitch();
+				}
+			}
+		}
+
+
 		public void RemoveTile(Vector3Int position, bool RemoveAll = true)
 		{
+			NotifyRegisterTilePotentialMatrixChange(position);
 			TileLocation TileLcation = null;
 			foreach (var layer in LayersValues)
 			{
@@ -1097,7 +1406,8 @@ namespace TileManagement
 			Vector2 origin,
 			Vector2 direction,
 			float distance,
-			LayerTypeSelection layerMask, Vector2? To = null)
+			LayerTypeSelection layerMask, Vector2? To = null,
+			LayerTile[] tileNamesToIgnore = null)
 		{
 			if (To == null)
 			{
@@ -1288,6 +1598,8 @@ namespace TileManagement
 
 						if (TileLcation != null)
 						{
+							if(tileNamesToIgnore != null && tileNamesToIgnore.Any( c => c.name == TileLcation?.Tile.name)) continue;
+
 							Vector2 normal;
 
 							if (LeftFaceHit)
@@ -1318,5 +1630,28 @@ namespace TileManagement
 
 
 		#endregion
+	}
+
+	public enum OverlayType
+	{
+		//none is used to say there is no overlay, add new category if you need a new type
+		None,
+		Gas,
+		Damage,
+		Cleanable,
+		Fire,
+		Mining,
+		KineticAnimation,
+		Plasma,
+		NO2,
+		WaterVapour,
+		Miasma,
+		Nitryl,
+		Tritium,
+		Freon,
+		FireSparkles,
+		FireOverCharged,
+		FireFusion,
+		FireRainbow
 	}
 }

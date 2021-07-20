@@ -9,12 +9,6 @@ namespace Pipes
 	{
 		private Canister canister;
 
-		public override void Start()
-		{
-			pipeData.PipeAction = new MonoActions();
-			base.Start();
-		}
-
 		public override void TickUpdate()
 		{
 			// TODO: the connector now considers if the valve is open, but it should also take into
@@ -24,6 +18,7 @@ namespace Pipes
 			base.TickUpdate();
 			if (canister != null && canister.ValveIsOpen)
 			{
+				pipeData.mixAndVolume.GetGasMix().MergeGasMix(canister.GasContainer.GasMix);
 				canister.GasContainer.GasMix = pipeData.mixAndVolume.EqualiseWithExternal(canister.GasContainer.GasMix);
 			}
 			pipeData.mixAndVolume.EqualiseWithOutputs(pipeData.Outputs);

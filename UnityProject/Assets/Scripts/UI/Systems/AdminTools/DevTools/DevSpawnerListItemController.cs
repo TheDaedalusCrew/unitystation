@@ -1,5 +1,7 @@
 ﻿using System.Collections.Generic;
 using DatabaseAPI;
+using Items;
+using Messages.Client.DevSpawner;
 using UnityEngine;
 using UnityEngine.EventSystems;
 using UnityEngine.UI;
@@ -30,6 +32,7 @@ public class DevSpawnerListItemController : MonoBehaviour
 	private EscapeKeyTarget escapeKeyTarget;
 
 	private LightingSystem lightingSystem;
+	private bool cachedLightingState;
 
 	void Awake()
 	{
@@ -67,7 +70,7 @@ public class DevSpawnerListItemController : MonoBehaviour
 	{
 		if (selectedItem == this)
 		{
-			cursorObject.transform.position = Camera.main.ScreenToWorldPoint(CommonInput.mousePosition);
+			cursorObject.transform.position = MouseUtils.MouseToWorldPos();
 			if (CommonInput.GetMouseButtonDown(0))
 			{
 				//Ignore spawn if pointer is hovering over GUI
@@ -95,7 +98,7 @@ public class DevSpawnerListItemController : MonoBehaviour
 			escapeKeyTarget.enabled = false;
 			selectedItem = null;
 			drawingMessage.SetActive(false);
-			lightingSystem.enabled = true;
+			lightingSystem.enabled = cachedLightingState;
 		}
 	}
 
@@ -136,6 +139,7 @@ public class DevSpawnerListItemController : MonoBehaviour
 			escapeKeyTarget.enabled = true;
 			selectedItem = this;
 			drawingMessage.SetActive(true);
+			cachedLightingState = lightingSystem.enabled;
 			lightingSystem.enabled = false;
 		}
 	}
@@ -177,7 +181,6 @@ public class DevSpawnerListItemController : MonoBehaviour
 	private void TrySpawn()
 	{
 		Vector3Int position = cursorObject.transform.position.RoundToInt();
-		position.z = 0;
 
 		if (CustomNetworkManager.IsServer)
 		{

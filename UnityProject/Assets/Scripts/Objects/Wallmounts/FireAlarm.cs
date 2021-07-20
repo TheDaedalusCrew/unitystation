@@ -1,3 +1,4 @@
+using System;
 using System.Collections;
 using System.Collections.Generic;
 using Electricity.Inheritance;
@@ -6,10 +7,12 @@ using ScriptableObjects;
 using UnityEngine;
 using Systems.Atmospherics;
 using Doors;
+using AddressableReferences;
+using Core.Input_System.InteractionV2.Interactions;
 
 namespace Objects.Wallmounts
 {
-	public class FireAlarm : SubscriptionController, IServerLifecycle, ICheckedInteractable<HandApply>, ISetMultitoolMaster
+	public class FireAlarm : SubscriptionController, IServerLifecycle, ICheckedInteractable<HandApply>, ISetMultitoolMaster, ICheckedInteractable<AiActivate>
 	{
 		public List<FireLock> FireLockList = new List<FireLock>();
 		private MetaDataNode metaNode;
@@ -30,6 +33,7 @@ namespace Objects.Wallmounts
 		[SerializeField]
 		private MultitoolConnectionType conType = MultitoolConnectionType.FireAlarm;
 		public MultitoolConnectionType ConType => conType;
+		[SerializeField] private AddressableAudioSource FireAlarmSFX = null;
 
 		private bool multiMaster = true;
 		public bool MultiMaster => multiMaster;
@@ -55,7 +59,7 @@ namespace Objects.Wallmounts
 			{
 				activated = true;
 				stateSync = FireAlarmState.TopLightSpriteAlert;
-				SoundManager.PlayNetworkedAtPos("FireAlarm", metaNode.Position);
+				SoundManager.PlayNetworkedAtPos(FireAlarmSFX, metaNode.Position);
 				StartCoroutine(SwitchCoolDown());
 				foreach (var firelock in FireLockList)
 				{
@@ -69,7 +73,7 @@ namespace Objects.Wallmounts
 		{
 			var integrity = GetComponent<Integrity>();
 			integrity.OnExposedEvent.AddListener(SendCloseAlerts);
-			AtmosManager.Instance.inGameFireAlarms.Add(this);
+			UpdateManager.Add(UpdateMe, 1);
 			RegisterTile registerTile = GetComponent<RegisterTile>();
 			MetaDataLayer metaDataLayer = MatrixManager.AtPoint(registerTile.WorldPositionServer, true).MetaDataLayer;
 			var wallMount = GetComponent<WallmountBehavior>();
@@ -88,7 +92,7 @@ namespace Objects.Wallmounts
 
 		}
 
-		public void TickUpdate()
+		public void UpdateMe()
 		{
 			if (!activated)
 			{
@@ -99,9 +103,14 @@ namespace Objects.Wallmounts
 			}
 		}
 
+		public void OnDestroy()
+		{
+			UpdateManager.Remove(CallbackType.PERIODIC_UPDATE, UpdateMe);
+		}
+
 		public void OnDespawnServer(DespawnInfo info)
 		{
-			AtmosManager.Instance.inGameFireAlarms.Remove(this);
+			UpdateManager.Remove(CallbackType.PERIODIC_UPDATE, UpdateMe);
 		}
 
 		public bool WillInteract(HandApply interaction, NetworkSide side)
@@ -176,24 +185,29 @@ namespace Objects.Wallmounts
 			}
 			else
 			{
-				if (activated && !isInCooldown)
-				{
-					activated = false;
-					stateSync = FireAlarmState.TopLightSpriteNormal;
-					StartCoroutine(SwitchCoolDown());
-					foreach (var firelock in FireLockList)
-					{
-						if (firelock == null) continue;
-						var controller = firelock.Controller;
-						if (controller == null) continue;
+				InternalToggleState();
+			}
+		}
 
-						controller.TryOpen();
-					}
-				}
-				else
+		private void InternalToggleState()
+		{
+			if (activated && !isInCooldown)
+			{
+				activated = false;
+				stateSync = FireAlarmState.TopLightSpriteNormal;
+				StartCoroutine(SwitchCoolDown());
+				foreach (var firelock in FireLockList)
 				{
-					SendCloseAlerts();
+					if (firelock == null) continue;
+					var controller = firelock.Controller;
+					if (controller == null) continue;
+
+					controller.TryOpen();
 				}
+			}
+			else
+			{
+				SendCloseAlerts();
 			}
 		}
 
@@ -272,6 +286,24 @@ namespace Objects.Wallmounts
 				FireLockList.Add(fireLock);
 				fireLock.fireAlarm = this;
 			}
+		}
+
+		#endregion
+
+		#region Ai Interaction
+
+		public bool WillInteract(AiActivate interaction, NetworkSide side)
+		{
+			if (interaction.ClickType != AiActivate.ClickTypes.NormalClick) return false;
+
+			if (DefaultWillInteract.AiActivate(interaction, side) == false) return false;
+
+			return true;
+		}
+
+		public void ServerPerformInteraction(AiActivate interaction)
+		{
+			InternalToggleState();
 		}
 
 		#endregion

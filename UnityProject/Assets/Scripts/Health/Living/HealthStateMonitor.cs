@@ -1,5 +1,6 @@
 using System;
 using System.Collections;
+using Messages.Server.HealthMessages;
 using UnityEngine;
 using Mirror;
 
@@ -7,7 +8,7 @@ using Mirror;
 ///		Health Monitoring component for all Living entities
 ///     Monitors the state of the entities health on the server and acts accordingly
 /// </summary>
-public class HealthStateMonitor : ManagedNetworkBehaviour
+public class HealthStateMonitor : NetworkBehaviour
 {
 	//Cached members
 	float overallHealthCache;
@@ -35,6 +36,20 @@ public class HealthStateMonitor : ManagedNetworkBehaviour
 		livingHealthBehaviour = GetComponent<LivingHealthBehaviour>();
 	}
 
+	private void OnEnable()
+	{
+		if(CustomNetworkManager.IsServer == false) return;
+
+		UpdateManager.Add(CallbackType.UPDATE, UpdateMe);
+	}
+
+	private void OnDisable()
+	{
+		if(CustomNetworkManager.IsServer == false) return;
+
+		UpdateManager.Remove(CallbackType.UPDATE, UpdateMe);
+	}
+
 	public override void OnStartServer()
 	{
 		InitServerCache();
@@ -55,7 +70,7 @@ public class HealthStateMonitor : ManagedNetworkBehaviour
 		}
 		else
 		{
-			Logger.LogWarning($"No {nameof(livingHealthBehaviour.respiratorySystem)} found on {this}. Is this intended?");
+			Logger.LogWarning($"No {nameof(livingHealthBehaviour.respiratorySystem)} found on {this}. Is this intended?", Category.Health);
 		}
 
 		UpdateBloodCaches();
@@ -77,18 +92,18 @@ public class HealthStateMonitor : ManagedNetworkBehaviour
 
 	/// ---------------------------
 	/// SYSTEM MONITOR
+	/// Server Side Only
 	/// ---------------------------
-	public override void UpdateMe()
+	private void UpdateMe()
 	{
-		if (isServer && init)
+		if (init == false) return;
+
+		MonitorCrucialStats();
+		tick += Time.deltaTime;
+		if (tick > tickRate)
 		{
-			MonitorCrucialStats();
-			tick += Time.deltaTime;
-			if (tick > tickRate)
-			{
-				tick = 0f;
-				MonitorNonCrucialStats();
-			}
+			tick = 0f;
+			MonitorNonCrucialStats();
 		}
 	}
 
@@ -198,12 +213,12 @@ public class HealthStateMonitor : ManagedNetworkBehaviour
 
 	void SendConsciousUpdate()
 	{
-		HealthConsciousMessage.SendToAll(gameObject, livingHealthBehaviour.ConsciousState);
+		//HealthConsciousMessage.SendToAll(gameObject, livingHealthBehaviour.ConsciousState);
 	}
 
 	void SendOverallUpdate()
 	{
-		HealthOverallMessage.Send(gameObject, gameObject, livingHealthBehaviour.OverallHealth);
+		//HealthOverallMessage.Send(gameObject, gameObject, livingHealthBehaviour.OverallHealth);
 	}
 
 	void SendBloodUpdate()
@@ -227,12 +242,12 @@ public class HealthStateMonitor : ManagedNetworkBehaviour
 
 	void SendOverallUpdate(GameObject requestor)
 	{
-		HealthOverallMessage.Send(requestor, gameObject, livingHealthBehaviour.OverallHealth);
+		//HealthOverallMessage.Send(requestor, gameObject, livingHealthBehaviour.OverallHealth);
 	}
 
 	void SendConsciousUpdate(GameObject requestor)
 	{
-		HealthConsciousMessage.Send(requestor, gameObject, livingHealthBehaviour.ConsciousState);
+		//HealthConsciousMessage.Send(requestor, gameObject, livingHealthBehaviour.ConsciousState);
 	}
 
 	void SendBloodUpdate(GameObject requestor)
@@ -243,17 +258,18 @@ public class HealthStateMonitor : ManagedNetworkBehaviour
 
 	void SendRespiratoryUpdate()
 	{
-		HealthRespiratoryMessage.Send(gameObject, isSuffocatingCache);
+		//Done
+		//HealthRespiratoryMessage.Send(gameObject, isSuffocatingCache);
 	}
 
 	void SendTemperatureUpdate()
 	{
-		HealthTemperatureMessage.Send(gameObject, temperatureCache);
+		//HealthTemperatureMessage.Send(gameObject, temperatureCache);
 	}
 
 	void SendPressureUpdate()
 	{
-		HealthPressureMessage.Send(gameObject, pressureCache);
+		//HealthPressureMessage.Send(gameObject, pressureCache);
 	}
 
 	void SendBrainUpdate(GameObject requestor)

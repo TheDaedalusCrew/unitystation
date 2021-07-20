@@ -6,6 +6,8 @@ using Systems.Explosions;
 using Systems.Radiation;
 using Tilemaps.Behaviours.Meta;
 using UnityEngine;
+using Systems.Electricity;
+using ScriptableObjects.Atmospherics;
 
 /// <summary>
 /// Holds all of the metadata associated with an individual tile, such as for atmospherics simulation, damage.
@@ -13,6 +15,11 @@ using UnityEngine;
 public class MetaDataNode : IGasMixContainer
 {
 	public static readonly MetaDataNode None;
+
+	/// <summary>
+	/// Contains the matrix of the current node
+	/// </summary>
+	public Matrix PositionMatrix = null;
 
 	/// <summary>
 	/// Used for calculating explosion data
@@ -33,7 +40,6 @@ public class MetaDataNode : IGasMixContainer
 	/// This contains all the pipe data needed On the tile
 	/// </summary>
 	public List<Pipes.PipeNode> PipeData = new List<Pipes.PipeNode>();
-
 
 	/// <summary>
 	/// Local position of this tile in its parent matrix.
@@ -62,6 +68,34 @@ public class MetaDataNode : IGasMixContainer
 	public Hotspot Hotspot;
 
 	private Dictionary<LayerType, float> damageInfo  = new Dictionary<LayerType, float>();
+
+	//Which overlays this node has on
+	private HashSet<GasSO> gasOverlayData = new HashSet<GasSO>();
+	public HashSet<GasSO> GasOverlayData => gasOverlayData;
+
+	//Conductivity Stuff//
+
+	//Temperature of the solid node
+	public float ConductivityTemperature = TemperatureUtils.ZERO_CELSIUS_IN_KELVIN;
+	//How easily the node conducts 0-1
+	public float ThermalConductivity = 0f;
+	//Heat capacity of the node, also effects conducting speed
+	public float HeatCapacity = 0f;
+
+	//If this node started the conductivity
+	public bool StartingSuperConduct;
+	//If this node is allowed to share temperature to surrounding nodes
+	public bool AllowedToSuperConduct;
+
+	public void AddGasOverlay(GasSO gas)
+	{
+		gasOverlayData.Add(gas);
+	}
+
+	public void RemoveGasOverlay(GasSO gas)
+	{
+		gasOverlayData.Remove(gas);
+	}
 
 	public float GetTileDamage(LayerType layerType)
 	{
@@ -118,26 +152,26 @@ public class MetaDataNode : IGasMixContainer
 	public ReactionManager ReactionManager => reactionManager;
 	private ReactionManager reactionManager;
 
-
 	/// <summary>
 	/// Create a new MetaDataNode on the specified local position (within the parent matrix)
 	/// </summary>
 	/// <param name="position">local position (within the matrix) the node exists on</param>
-	public MetaDataNode(Vector3Int position, ReactionManager reactionManager)
+	public MetaDataNode(Vector3Int position, ReactionManager reactionManager, Matrix matrix)
 	{
+		PositionMatrix = matrix;
 		Position = position;
 		neighborList = new List<MetaDataNode>(4);
 		for (var i = 0; i < neighborList.Capacity; i++)
 		{
 			neighborList.Add(null);
 		}
-		GasMix = new GasMix(GasMixes.Space);
+		GasMix = GasMix.NewGasMix(GasMixes.BaseSpaceMix);
 		this.reactionManager = reactionManager;
 	}
 
 	static MetaDataNode()
 	{
-		None = new MetaDataNode(Vector3Int.one * -1000000, null);
+		None = new MetaDataNode(Vector3Int.one * -1000000, null, null);
 	}
 
 	/// <summary>
@@ -151,10 +185,10 @@ public class MetaDataNode : IGasMixContainer
 	public bool IsRoom => Type == NodeType.Room;
 
 	/// <summary>
-	/// Does this tile contain a closed airlock/shutters?
+	/// Does this tile contain a closed airlock/shutters? Prevents gas exchange to adjacent tiles
 	/// (used for gas freezing)
 	/// </summary>
-	public bool IsClosedAirlock { get; set; }
+	public bool IsIsolatedNode { get; set; }
 
 	/// <summary>
 	/// Is this tile occupied by something impassable (airtight!)
@@ -228,7 +262,7 @@ public class MetaDataNode : IGasMixContainer
 					SyncNeighbors();
 					return;
 				}
-				Logger.LogErrorFormat("Failed adding neighbor {0} to node {1} at direction {2}", Category.Atmos, neighbor, this, direction);
+				Logger.LogErrorFormat("Failed adding neighbor {0} to node {1} at direction {2}", Category.Matrix, neighbor, this, direction);
 			}
 		}
 	}

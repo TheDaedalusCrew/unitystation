@@ -1,6 +1,9 @@
 ﻿using System.Collections;
 using System.Collections.Generic;
+using Systems.Clearance;
 using UnityEngine;
+using AddressableReferences;
+using HealthV2;
 
 namespace Objects.Drawers
 {
@@ -11,6 +14,9 @@ namespace Objects.Drawers
 	/// </summary>
 	public class Cremator : Drawer, IRightClickable, ICheckedInteractable<ContextMenuApply>
 	{
+		[Tooltip("Sound used for cremation.")]
+		[SerializeField] private AddressableAudioSource CremationSound = null;
+
 		// Extra states over the base DrawerState enum.
 		private enum CrematorState
 		{
@@ -21,6 +27,7 @@ namespace Objects.Drawers
 		}
 
 		private AccessRestrictions accessRestrictions;
+		private ClearanceCheckable clearanceCheckable;
 
 		private const float BURNING_DURATION = 1.5f; // In seconds - timed to the Ding SFX.
 
@@ -28,6 +35,7 @@ namespace Objects.Drawers
 		{
 			base.Awake();
 			accessRestrictions = GetComponent<AccessRestrictions>();
+			clearanceCheckable = GetComponent<ClearanceCheckable>();
 		}
 
 		// This region (Interaction-RightClick) shouldn't exist once TODO in class summary is done.
@@ -37,7 +45,21 @@ namespace Objects.Drawers
 		{
 			RightClickableResult result = RightClickableResult.Create();
 			if (drawerState == DrawerState.Open) return result;
-			if (!accessRestrictions.CheckAccess(PlayerManager.LocalPlayer)) return result;
+
+			/* --ACCESS REWORK--
+			 *  TODO Remove the AccessRestriction check when we finish migrating!
+			 *
+			 */
+
+			if (accessRestrictions)
+			{
+				if (accessRestrictions.CheckAccess(PlayerManager.LocalPlayer) == false) return result;
+			}
+			else if (clearanceCheckable)
+			{
+				if (clearanceCheckable.HasClearance(PlayerManager.LocalPlayer) == false) return result;
+			}
+
 			var cremateInteraction = ContextMenuApply.ByLocalPlayer(gameObject, null);
 			if (!WillInteract(cremateInteraction, NetworkSide.Client)) return result;
 
@@ -62,7 +84,7 @@ namespace Objects.Drawers
 			Cremate();
 		}
 
-		#endregion Interaction-RightClick
+		#endregion
 
 		#region Interaction
 
@@ -72,7 +94,7 @@ namespace Objects.Drawers
 			base.ServerPerformInteraction(interaction);
 		}
 
-		#endregion Interaction
+		#endregion
 
 		#region Server Only
 
@@ -98,7 +120,7 @@ namespace Objects.Drawers
 		{
 			OnStartPlayerCremation();
 			StartCoroutine(PlayIncineratingAnim());
-			SoundManager.PlayNetworkedAtPos("Microwave", DrawerWorldPosition, sourceObj: gameObject);
+			SoundManager.PlayNetworkedAtPos(CremationSound, DrawerWorldPosition, sourceObj: gameObject);
 			DestroyItems();
 		}
 
@@ -106,7 +128,7 @@ namespace Objects.Drawers
 		{
 			foreach (KeyValuePair<ObjectBehaviour, Vector3> item in serverHeldItems)
 			{
-				Despawn.ServerSingle(item.Key.gameObject);
+				_ = Despawn.ServerSingle(item.Key.gameObject);
 			}
 
 			serverHeldItems = new Dictionary<ObjectBehaviour, Vector3>();
@@ -118,7 +140,7 @@ namespace Objects.Drawers
 
 			foreach (ObjectBehaviour player in serverHeldPlayers)
 			{
-				LivingHealthBehaviour playerLHB = player.GetComponent<LivingHealthBehaviour>();
+				LivingHealthMasterBase playerLHB = player.GetComponent<LivingHealthMasterBase>();
 				if (playerLHB.ConsciousState == ConsciousState.CONSCIOUS ||
 					playerLHB.ConsciousState == ConsciousState.BARELY_CONSCIOUS)
 				{
@@ -139,7 +161,7 @@ namespace Objects.Drawers
 			{
 				var playerScript = player.GetComponent<PlayerScript>();
 				PlayerSpawn.ServerSpawnGhost(playerScript.mind);
-				Despawn.ServerSingle(player.gameObject);
+				_ = Despawn.ServerSingle(player.gameObject);
 			}
 
 			serverHeldPlayers = new List<ObjectBehaviour>();
@@ -153,6 +175,6 @@ namespace Objects.Drawers
 			UpdateCloseState();
 		}
 
-		#endregion Server Only
+		#endregion
 	}
 }

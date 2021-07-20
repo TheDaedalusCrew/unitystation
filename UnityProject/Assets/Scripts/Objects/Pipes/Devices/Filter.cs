@@ -1,6 +1,10 @@
-﻿using System.Collections;
+﻿using System;
+using System.Collections;
 using System.Collections.Generic;
 using Systems.Atmospherics;
+using Core.Input_System.InteractionV2.Interactions;
+using Messages.Server;
+using ScriptableObjects.Atmospherics;
 using UnityEngine;
 
 namespace Pipes
@@ -11,24 +15,7 @@ namespace Pipes
 
 		private MixAndVolume IntermediateMixAndVolume = new MixAndVolume();
 
-		public Dictionary<string, Gas> CapableFiltering = new Dictionary<string, Gas>()
-		{
-			{"O2",Gas.Oxygen},
-			{"N2",Gas.Nitrogen},
-			{"PLS",Gas.Plasma},
-			{"CO2",Gas.CarbonDioxide},
-			{"N2O",Gas.NitrousOxide},
-			{"H2",Gas.Hydrogen},
-			{"H2O",Gas.WaterVapor},
-			{"BZ",Gas.BZ},
-			{"MIAS",Gas.Miasma},
-			{"NO2",Gas.Nitryl},
-			{"TRIT",Gas.Tritium},
-			{"HN",Gas.HyperNoblium},
-			{"STIM",Gas.Stimulum},
-			{"PLX",Gas.Pluoxium},
-			{"FRE",Gas.Freon},
-		};
+		public static Dictionary<string, GasSO> CapableFiltering;
 
 		//This is only used to set the inital filter values, nothing else
 		//the names contained within should always match the key of the above Dictionary
@@ -52,21 +39,47 @@ namespace Pipes
 		}
 
 		[SerializeField]
-		private FilterValues initalFilterValue;
+		private FilterValues initalFilterValue = default;
 
 		public int MaxPressure = 9999;
 		private float TransferMoles = 500f;
 
 		public bool IsOn = false;
 
-		public Gas GasIndex = Gas.Oxygen;
+		[NonSerialized]
+		public GasSO GasIndex;
 		public Chemistry.Reagent FilterReagent;
 
-		public override void Start()
+		public override void Awake()
+		{
+			base.Awake();
+
+			//Only needs to be set once by one instance
+			if(CapableFiltering != null) return;
+
+			CapableFiltering = new Dictionary<string, GasSO>()
+			{
+				{"O2",Gas.Oxygen},
+				{"N2",Gas.Nitrogen},
+				{"PLS",Gas.Plasma},
+				{"CO2",Gas.CarbonDioxide},
+				{"N2O",Gas.NitrousOxide},
+				{"H2",Gas.Hydrogen},
+				{"H2O",Gas.WaterVapor},
+				{"BZ",Gas.BZ},
+				{"MIAS",Gas.Miasma},
+				{"NO2",Gas.Nitryl},
+				{"TRIT",Gas.Tritium},
+				{"HN",Gas.HyperNoblium},
+				{"STIM",Gas.Stimulum},
+				{"PLX",Gas.Pluoxium},
+				{"FRE",Gas.Freon},
+			};
+		}
+
+		public override void OnSpawnServer(SpawnInfo info)
 		{
 			GasIndex = CapableFiltering[initalFilterValue.ToString()];
-			pipeData.PipeAction = new MonoActions();
-			base.Start();
 
 			if (IsOn)
 			{
@@ -76,6 +89,7 @@ namespace Pipes
 			{
 				spriteHandlerOverlay.PushClear();
 			}
+			base.OnSpawnServer(info);
 		}
 
 		public void TogglePower()
@@ -91,9 +105,15 @@ namespace Pipes
 			}
 		}
 
-		public override void Interaction(HandApply interaction)
+		public override void HandApplyInteraction(HandApply interaction)
 		{
 			TabUpdateMessage.Send( interaction.Performer, gameObject, NetTabType.Filter, TabAction.Open );
+		}
+
+		//Ai interaction
+		public override void AiInteraction(AiActivate interaction)
+		{
+			TabUpdateMessage.Send(interaction.Performer, gameObject, NetTabType.Filter, TabAction.Open);
 		}
 
 		public override void TickUpdate()

@@ -119,7 +119,7 @@ public partial class PlayerSync
 				//RequestMoveMessage.Send(action);
 				BumpType clientBump = CheckSlideAndBump(predictedState, false, ref action);
 
-				action.isRun = UIManager.Intent.running;
+				action.isRun = UIManager.Intent.Running;
 
 				// handle predictions here
 				if(playerScript.RcsMode)
@@ -130,7 +130,7 @@ public partial class PlayerSync
 
 				}
 				//can only move freely if we are grounded or adjacent to another player
-				else if (CanMoveFreely(isGrounded, clientBump))
+				else if (CanMoveFreely(isGrounded, clientBump) && playerScript.playerMove.IsBuckled == false)
 				{
 					//move freely
 					pendingActions.Enqueue(action);
@@ -250,12 +250,12 @@ public partial class PlayerSync
 				}
 
 				// if player can't reach, player can't push
-				if (MatrixManager.IsPassableAtAllMatrices(worldOrigin, worldTile, isServer: false, includingPlayers: false, 
+				if (MatrixManager.IsPassableAtAllMatrices(worldOrigin, worldTile, isServer: false, includingPlayers: false,
 						context: potentialPushed.gameObject, isReach: true) == false)
 				{
 					continue;
 				}
-				
+
 
 				// If its movement is blocked, don't push it
 				if (potentialPushed.CanPushClient(worldTile, direction) == false)
@@ -381,16 +381,9 @@ public partial class PlayerSync
 	{
 		if ( !playerScript.IsGhost )
 		{
-			if ( !playerScript.playerHealth.IsSoftCrit )
-			{
-				SpeedClient = action.isRun ? playerMove.RunSpeed : playerMove.WalkSpeed;
-			}
-			else
-			{
-				SpeedClient = playerMove.CrawlSpeed;
-			}
+			SpeedClient = ActionSpeed(action);
 		}
-			
+
 		var nextState = NextState(state, action, isReplay);
 
 		nextState.Speed = SpeedClient;

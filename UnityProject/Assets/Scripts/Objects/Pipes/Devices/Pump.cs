@@ -1,5 +1,6 @@
 ﻿using System.Collections;
 using System.Collections.Generic;
+using Core.Input_System.InteractionV2.Interactions;
 using UnityEngine;
 
 namespace Pipes
@@ -15,11 +16,8 @@ namespace Pipes
 
 		public bool IsOn = false;
 
-		public override void Start()
+		public override void OnSpawnServer(SpawnInfo info)
 		{
-			pipeData.PipeAction = new MonoActions();
-			base.Start();
-
 			if (IsOn)
 			{
 				spriteHandlerOverlay.PushTexture();
@@ -28,9 +26,21 @@ namespace Pipes
 			{
 				spriteHandlerOverlay.PushClear();
 			}
+			base.OnSpawnServer(info);
 		}
 
-		public override void Interaction(HandApply interaction)
+		public override void HandApplyInteraction(HandApply interaction)
+		{
+			ToggleState();
+		}
+
+		//Ai interaction
+		public override void AiInteraction(AiActivate interaction)
+		{
+			ToggleState();
+		}
+
+		private void ToggleState()
 		{
 			IsOn = !IsOn;
 			if (IsOn)

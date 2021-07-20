@@ -31,7 +31,7 @@ namespace CustomInspectors
 				}
 				else
 				{
-					GUILayout.Label($"Connected to APC: {device.RelatedAPC.gameObject}");
+					GUILayout.Label($"Connected to APC: {device.RelatedAPC.gameObject.name}");
 				}
 			}
 
@@ -65,6 +65,14 @@ namespace CustomInspectors
 			}
 
 			if (bestTarget == null || bestTarget == device.RelatedAPC) return;
+
+			//If connected to apc before remove us
+			if (device.RelatedAPC != null)
+			{
+				EditorUtility.SetDirty(device.RelatedAPC);
+				device.RelatedAPC.RemoveDevice(device);
+			}
+
 			device.RelatedAPC = bestTarget;
 
 			EditorUtility.SetDirty(device);

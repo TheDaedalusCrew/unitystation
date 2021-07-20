@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using Messages.Server;
 using UnityEngine.Events;
 
 /// <summary>
@@ -15,6 +16,7 @@ public class NetPageSwitcher : NetUIStringElement
 
 	public List<NetPage> Pages = new List<NetPage>();
 	public NetPage DefaultPage;
+	[NonSerialized]
 	public NetPage CurrentPage;
 	private int CurrentPageIndex => Pages.IndexOf( CurrentPage );
 	public bool StartInitialized { get; private set; } = false;

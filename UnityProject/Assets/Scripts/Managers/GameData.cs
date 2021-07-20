@@ -1,17 +1,13 @@
 ﻿using System;
 using System.Collections;
 using System.IO;
-using System.Net.Http;
-using System.Runtime.CompilerServices;
-using System.Threading;
 using System.Threading.Tasks;
 using DatabaseAPI;
 using Firebase.Auth;
 using Firebase.Extensions;
 using Lobby;
-using Mirror;
+using Managers;
 using UnityEngine;
-using UnityEngine.Networking;
 using UnityEngine.Rendering;
 using UnityEngine.SceneManagement;
 
@@ -69,13 +65,20 @@ public class GameData : MonoBehaviour
 		}
 	}
 
-	void Awake()
+	public bool DevBuild = false;
+
+	#region Lifecycle
+
+	private void Awake()
 	{
 		Init();
 	}
 
 	private void Init()
 	{
+#if UNITY_EDITOR
+		DevBuild = true;
+#endif
 		var buildInfo =
 			JsonUtility.FromJson<BuildInfo>(File.ReadAllText(Path.Combine(Application.streamingAssetsPath,
 				"buildinfo.json")));
@@ -101,6 +104,75 @@ public class GameData : MonoBehaviour
 			}
 		}
 	}
+
+	private void OnEnable()
+	{
+		Logger.RefreshPreferences();
+
+		SceneManager.activeSceneChanged += OnLevelFinishedLoading;
+	}
+
+	private void OnDisable()
+	{
+		SceneManager.activeSceneChanged -= OnLevelFinishedLoading;
+	}
+
+	private IEnumerator WaitToStartServer()
+	{
+		yield return WaitFor.Seconds(0.1f);
+		CustomNetworkManager.Instance.StartHost();
+	}
+
+	private void OnLevelFinishedLoading(Scene oldScene, Scene newScene)
+	{
+		Resources.UnloadUnusedAssets();
+		if (newScene.name == "Lobby")
+		{
+			IsInGame = false;
+			GameScreenManager.Instance.SetScreenForLobby();
+		}
+		else
+		{
+			IsInGame = true;
+			GameScreenManager.Instance.SetScreenForGame();
+		}
+
+		if (CustomNetworkManager.Instance.isNetworkActive)
+		{
+			//Reset stuff
+			CheckHeadlessState();
+
+			if (IsInGame && GameManager.Instance != null && CustomNetworkManager.Instance._isServer)
+			{
+				GameManager.Instance.ResetRoundTime();
+			}
+
+			return;
+		}
+
+		//Check if running in batchmode (headless server)
+		if (CheckHeadlessState())
+		{
+			//			float calcFrameRate = 1f / Time.deltaTime;
+			//			Application.targetFrameRate = (int) calcFrameRate;
+			//			Logger.Log($"Starting server in HEADLESS mode. Target framerate is {Application.targetFrameRate}",
+			//				Category.Server);
+
+			Logger.Log($"FrameRate limiting has been disabled on Headless Server",
+				Category.Server);
+			IsHeadlessServer = true;
+			StartCoroutine(WaitToStartServer());
+
+			if (rconManager == null)
+			{
+				GameObject rcon = Instantiate(Resources.Load("Rcon/RconManager") as GameObject, null) as GameObject;
+				rconManager = rcon.GetComponent<RconManager>();
+				Logger.Log("Start rcon server", Category.Rcon);
+			}
+		}
+	}
+
+	#endregion
 
 	private bool CheckCommandLineArgs()
 	{
@@ -152,7 +224,7 @@ public class GameData : MonoBehaviour
 
 		LobbyManager.Instance.lobbyDialogue.serverAddressInput.text = ip;
 		LobbyManager.Instance.lobbyDialogue.serverPortInput.text = port;
-		Managers.instance.serverIP = ip;
+		GameScreenManager.Instance.serverIP = ip;
 
 		var refreshToken = new RefreshToken();
 		refreshToken.refreshToken = token;
@@ -169,7 +241,7 @@ public class GameData : MonoBehaviour
 
 		if (!string.IsNullOrEmpty(response.errorMsg))
 		{
-			Logger.LogError($"Something went wrong with hub token validation {response.errorMsg}", Category.Hub);
+			Logger.LogError($"Something went wrong with hub token validation {response.errorMsg}", Category.DatabaseAPI);
 			LobbyManager.Instance.lobbyDialogue.LoginError($"Could not verify your details {response.errorMsg}");
 			return;
 		}
@@ -179,14 +251,14 @@ public class GameData : MonoBehaviour
 			{
 				if (task.IsCanceled)
 				{
-					Logger.LogError("Custom token sign in was canceled.", Category.Hub);
+					Logger.LogError("Custom token sign in was canceled.", Category.DatabaseAPI);
 					LobbyManager.Instance.lobbyDialogue.LoginError($"Sign in was cancelled");
 					return;
 				}
 
 				if (task.IsFaulted)
 				{
-					Logger.LogError("Task Faulted: " + task.Exception, Category.Hub);
+					Logger.LogError("Task Faulted: " + task.Exception, Category.DatabaseAPI);
 					LobbyManager.Instance.lobbyDialogue.LoginError($"Task Faulted: " + task.Exception);
 					return;
 				}
@@ -195,7 +267,7 @@ public class GameData : MonoBehaviour
 
 				if (success)
 				{
-					Logger.Log("Signed in successfully with valid token", Category.Hub);
+					Logger.Log("Signed in successfully with valid token", Category.DatabaseAPI);
 					LobbyManager.Instance.lobbyDialogue.ShowCharacterEditor(OnCharacterScreenCloseFromHubConnect);
 				}
 				else
@@ -206,73 +278,12 @@ public class GameData : MonoBehaviour
 			});
 	}
 
-	void OnCharacterScreenCloseFromHubConnect()
+	private void OnCharacterScreenCloseFromHubConnect()
 	{
 		LobbyManager.Instance.lobbyDialogue.OnStartGameFromHub();
 	}
 
-	private void OnEnable()
-	{
-		Logger.RefreshPreferences();
-
-		SceneManager.activeSceneChanged += OnLevelFinishedLoading;
-	}
-
-	private void OnDisable()
-	{
-		SceneManager.activeSceneChanged -= OnLevelFinishedLoading;
-	}
-
-	private void OnLevelFinishedLoading(Scene oldScene, Scene newScene)
-	{
-		Resources.UnloadUnusedAssets();
-		if (newScene.name == "Lobby")
-		{
-			IsInGame = false;
-			Managers.instance.SetScreenForLobby();
-		}
-		else
-		{
-			IsInGame = true;
-			Managers.instance.SetScreenForGame();
-		}
-
-		if (CustomNetworkManager.Instance.isNetworkActive)
-		{
-			//Reset stuff
-			CheckHeadlessState();
-
-			if (IsInGame && GameManager.Instance != null && CustomNetworkManager.Instance._isServer)
-			{
-				GameManager.Instance.ResetRoundTime();
-			}
-
-			return;
-		}
-
-		//Check if running in batchmode (headless server)
-		if (CheckHeadlessState())
-		{
-//			float calcFrameRate = 1f / Time.deltaTime;
-//			Application.targetFrameRate = (int) calcFrameRate;
-//			Logger.Log($"Starting server in HEADLESS mode. Target framerate is {Application.targetFrameRate}",
-//				Category.Server);
-
-			Logger.Log($"FrameRate limiting has been disabled on Headless Server",
-				Category.Server);
-			IsHeadlessServer = true;
-			StartCoroutine(WaitToStartServer());
-
-			if (rconManager == null)
-			{
-				GameObject rcon = Instantiate(Resources.Load("Rcon/RconManager") as GameObject, null) as GameObject;
-				rconManager = rcon.GetComponent<RconManager>();
-				Logger.Log("Start rcon server", Category.Rcon);
-			}
-		}
-	}
-
-	bool CheckHeadlessState()
+	private bool CheckHeadlessState()
 	{
 		if (SystemInfo.graphicsDeviceType == GraphicsDeviceType.Null || Instance.testServer)
 		{
@@ -281,12 +292,6 @@ public class GameData : MonoBehaviour
 		}
 
 		return false;
-	}
-
-	private IEnumerator WaitToStartServer()
-	{
-		yield return WaitFor.Seconds(0.1f);
-		CustomNetworkManager.Instance.StartHost();
 	}
 
 	private string GetArgument(string name)

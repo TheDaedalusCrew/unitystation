@@ -2,9 +2,12 @@
 using System.Collections.Generic;
 using UnityEngine;
 using Mirror;
+using AddressableReferences;
+using Messages.Server;
+using Messages.Server.SoundMessages;
 
 namespace Objects.Drawers
-{
+{	
 	/// <summary>
 	/// A generic drawer component designed for multi-tile drawer objects.
 	/// </summary>
@@ -12,6 +15,9 @@ namespace Objects.Drawers
 	[ExecuteInEditMode]
 	public class Drawer : NetworkBehaviour, IServerDespawn, ICheckedInteractable<HandApply>
 	{
+	[SerializeField] private AddressableAudioSource BinOpenSFX = null;
+	[SerializeField] private AddressableAudioSource BinCloseSFX = null;
+
 		protected enum DrawerState
 		{
 			Open = 0,
@@ -56,7 +62,7 @@ namespace Objects.Drawers
 		protected Dictionary<ObjectBehaviour, Vector3> serverHeldItems = new Dictionary<ObjectBehaviour, Vector3>();
 		protected List<ObjectBehaviour> serverHeldPlayers = new List<ObjectBehaviour>();
 
-		#region Init Methods
+		#region Lifecycle
 
 		protected virtual void Awake()
 		{
@@ -79,7 +85,8 @@ namespace Objects.Drawers
 			SpawnResult traySpawn = Spawn.ServerPrefab(trayPrefab, DrawerWorldPosition);
 			if (!traySpawn.Successful)
 			{
-				Logger.LogError($"Failed to spawn tray! Is {name} prefab missing reference to {nameof(traySpawn)} prefab?");
+				Logger.LogError($"Failed to spawn tray! Is {name} prefab missing reference to {nameof(traySpawn)} prefab?",
+					Category.Machines);
 				return;
 			}
 			tray = traySpawn.GameObject;
@@ -95,7 +102,7 @@ namespace Objects.Drawers
 			UpdateSpriteOrientation();
 		}
 
-		#endregion Init Methods
+		#endregion
 
 		/// <summary>
 		/// If the object is about to despawn, eject its contents (unless already open)
@@ -108,7 +115,7 @@ namespace Objects.Drawers
 
 			EjectItems(true);
 			EjectPlayers(true);
-			Despawn.ServerSingle(tray);
+			_ = Despawn.ServerSingle(tray);
 		}
 
 		#region Sprite
@@ -201,7 +208,8 @@ namespace Objects.Drawers
 			EjectItems();
 			EjectPlayers();
 
-			SoundManager.PlayNetworkedAtPos("BinOpen", DrawerWorldPosition, Random.Range(0.8f, 1.2f), sourceObj: gameObject);
+			AudioSourceParameters audioSourceParameters = new AudioSourceParameters(pitch: Random.Range(0.8f, 1.2f));
+			SoundManager.PlayNetworkedAtPos(BinOpenSFX, DrawerWorldPosition, audioSourceParameters, sourceObj: gameObject);
 			SetDrawerState(DrawerState.Open);
 		}
 
@@ -212,8 +220,8 @@ namespace Objects.Drawers
 
 			GatherItems();
 			if (storePlayers) GatherPlayers();
-
-			SoundManager.PlayNetworkedAtPos("BinClose", DrawerWorldPosition, Random.Range(0.8f, 1.2f), sourceObj: gameObject);
+			AudioSourceParameters audioSourceParameters = new AudioSourceParameters(pitch: Random.Range(0.8f, 1.2f));
+			SoundManager.PlayNetworkedAtPos(BinCloseSFX, DrawerWorldPosition, audioSourceParameters, sourceObj: gameObject);
 			SetDrawerState(DrawerState.Shut);
 		}
 

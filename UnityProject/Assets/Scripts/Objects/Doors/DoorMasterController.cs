@@ -1,10 +1,16 @@
 ﻿using System.Collections;
 using System.Collections.Generic;
 using System.Linq;
+using System.Text;
 using Doors.Modules;
 using Mirror;
 using UnityEngine;
 using Systems.Electricity;
+using Core.Input_System.InteractionV2.Interactions;
+using HealthV2;
+using Messages.Client.NewPlayer;
+using Messages.Server;
+using UI.Core.Net;
 
 //TODO: Need to reimplement hacking with this system. Might be a nightmare, dk yet.
 namespace Doors
@@ -12,7 +18,7 @@ namespace Doors
 	/// <summary>
 	/// This is the master 'controller' for the door. It handles interactions by players and passes any interactions it need to to its components.
 	/// </summary>
-	public class DoorMasterController : NetworkBehaviour, ICheckedInteractable<HandApply>
+	public class DoorMasterController : NetworkBehaviour, ICheckedInteractable<HandApply>, ICheckedInteractable<AiActivate>, ICanOpenNetTab
 	{
 		#region inspector
 		[SerializeField]
@@ -49,7 +55,7 @@ namespace Doors
 		public bool IsClosed
 		{
 			get => registerTile.IsClosed;
-			private set => registerTile.IsClosed = value;
+			set => registerTile.IsClosed = value;
 		}
 
 		//Whether or not users can interact with the door.
@@ -62,39 +68,64 @@ namespace Doors
 		public bool IsPerformingAction => isPerformingAction;
 		public bool HasPower => APCPoweredDevice.IsOn(apc.State);
 
+
 		private RegisterDoor registerTile;
 		public RegisterDoor RegisterTile => registerTile;
+		private SpriteRenderer spriteRenderer;
 
 		private Matrix matrix => registerTile.Matrix;
+
 		private List<DoorModuleBase> modulesList;
+		public List<DoorModuleBase> ModulesList => modulesList;
+
 		private APCPoweredDevice apc;
 		public APCPoweredDevice Apc => apc;
 
+		[Tooltip("Does it have a glass window you can see trough?")] public bool isWindowedDoor;
+		private int openLayer;
+		private int openSortingLayer;
+		private int closedLayer;
+		private int closedSortingLayer;
 
 		private void Awake()
 		{
-			EnsureInit();
-		}
-
-		private void EnsureInit()
-		{
+			if (isWindowedDoor == false)
+			{
+				closedLayer = LayerMask.NameToLayer("Door Closed");
+			}
+			else
+			{
+				closedLayer = LayerMask.NameToLayer("Windows");
+			}
+			closedSortingLayer = SortingLayer.NameToID("Doors Closed");
+			openLayer = LayerMask.NameToLayer("Door Open");
+			openSortingLayer = SortingLayer.NameToID("Doors Open");
+			spriteRenderer = GetComponentInChildren<SpriteRenderer>();
 			registerTile = GetComponent<RegisterDoor>();
-
-			//Get out list of modules for use later.
 			modulesList = GetComponentsInChildren<DoorModuleBase>().ToList();
-
-			//Our APC powered device.
 			apc = GetComponent<APCPoweredDevice>();
-
 			doorAnimator = GetComponent<DoorAnimatorV2>();
-
 			doorAnimator.AnimationFinished += OnAnimationFinished;
 		}
 
 		public override void OnStartClient()
 		{
-			EnsureInit();
 			DoorNewPlayer.Send(netId);
+		}
+
+		/// <summary>
+		/// Used when player is joining, tells player to open the door if it is opened.
+		/// </summary>
+		public void UpdateNewPlayer(NetworkConnection playerConn)
+		{
+			if (IsClosed)
+			{
+				DoorUpdateMessage.Send(playerConn, gameObject, DoorUpdateType.Close, true);
+			}
+			else
+			{
+				DoorUpdateMessage.Send(playerConn, gameObject, DoorUpdateType.Open, true);
+			}
 		}
 
 		/// <summary>
@@ -108,14 +139,23 @@ namespace Doors
 			}
 
 			bool canOpen = true;
-
+			HashSet<DoorProcessingStates> states = new HashSet<DoorProcessingStates>();
 			foreach (var module in modulesList)
 			{
-				ModuleSignal signal = module.BumpingInteraction(byPlayer);
+				ModuleSignal signal = module.BumpingInteraction(byPlayer, states);
 
 				if (!module.CanDoorStateChange() || signal == ModuleSignal.ContinueWithoutDoorStateChange)
 				{
 					canOpen = false;
+				}
+
+				if(signal == ModuleSignal.ContinueRegardlessOfOtherModulesStates)
+				{
+					//(Max): This is to prevent some modules breaking some door behavior and rendering them un-useable.
+					//Only use this signal if you're module's logic is being interrupted by other
+					//modules that are sending ContinueWithoutDoorStateChange as a signal.
+					canOpen = true;
+					break;
 				}
 
 				if (signal == ModuleSignal.SkipRemaining || signal == ModuleSignal.Break)
@@ -125,9 +165,13 @@ namespace Doors
 				}
 			}
 
-			if (!isPerformingAction && canOpen)
+			if (!isPerformingAction && canOpen && CheckStatusAllow(states))
 			{
 				TryOpen(byPlayer);
+			}
+			else if(HasPower == false)
+			{
+				Chat.AddExamineMsgFromServer(byPlayer, $"{gameObject.ExpensiveName()} is unpowered");
 			}
 
 			StartInputCoolDown();
@@ -157,10 +201,11 @@ namespace Doors
 		/// <param name="interaction"></param>
 		public void OpenInteraction(HandApply interaction)
 		{
+			HashSet<DoorProcessingStates> states = new HashSet<DoorProcessingStates>();
 			bool canClose = true;
 			foreach (DoorModuleBase module in modulesList)
 			{
-				ModuleSignal signal = module.OpenInteraction(interaction);
+				ModuleSignal signal = module.OpenInteraction(interaction, states);
 
 				if (!module.CanDoorStateChange() || signal == ModuleSignal.ContinueWithoutDoorStateChange)
 				{
@@ -180,9 +225,9 @@ namespace Doors
 				}
 			}
 
-			if (!isPerformingAction && canClose)
+			if (!isPerformingAction && canClose && CheckStatusAllow(states))
 			{
-				TryClose(interaction.Performer);
+				TryClose(interaction.Performer, OverrideLogic: true);
 			}
 
 			StartInputCoolDown();
@@ -196,14 +241,16 @@ namespace Doors
 		public void ClosedInteraction(HandApply interaction)
 		{
 			bool canOpen = true;
+			HashSet<DoorProcessingStates> states = new HashSet<DoorProcessingStates>();
 			foreach (DoorModuleBase module in modulesList)
 			{
-				ModuleSignal signal = module.ClosedInteraction(interaction);
+				ModuleSignal signal = module.ClosedInteraction(interaction, states);
 
 				if (!module.CanDoorStateChange() || signal == ModuleSignal.ContinueWithoutDoorStateChange)
 				{
 					canOpen = false;
 				}
+
 
 				if (signal == ModuleSignal.SkipRemaining)
 				{
@@ -216,18 +263,40 @@ namespace Doors
 				}
 			}
 
-			if (!isPerformingAction && canOpen)
+			if (!isPerformingAction && (canOpen) && CheckStatusAllow(states))
 			{
 				TryOpen(interaction.Performer);
 			}
+			else if(HasPower == false)
+			{
+				Chat.AddExamineMsgFromServer(interaction.Performer, $"{gameObject.ExpensiveName()} is unpowered");
+			}
 		}
 
-		public void TryOpen(GameObject originator = null, bool blockClosing = false)
+		public bool CheckStatusAllow(HashSet<DoorProcessingStates> states)
 		{
-			if (IsClosed && !isPerformingAction && HasPower)
+			if (states.Contains(DoorProcessingStates.SoftwarePrevented))
 			{
-				Open(blockClosing);
+				return states.Contains(DoorProcessingStates.SoftwareHacked);
 			}
+			else
+			{
+				return true;
+			}
+		}
+
+
+		public void TryOpen(GameObject originator, bool blockClosing = false)
+		{
+			if(IsClosed == false || isPerformingAction) return;
+
+			if(HasPower == false)
+			{
+				Chat.AddExamineMsgFromServer(originator, $"{gameObject.ExpensiveName()} is unpowered");
+				return;
+			}
+
+			Open(blockClosing);
 		}
 
 		/// <summary>
@@ -250,18 +319,81 @@ namespace Doors
 			Open();
 		}
 
-		public void TryClose(GameObject originator = null, bool force = false)
+
+		/// <summary>
+		/// Try to force the door closed regardless of access/internal fuckery.
+		/// Purely check to see if there is something physically restraining the door from being closed such as a weld or door bolts.
+		/// </summary>
+		public void TryForceClose()
+		{
+			if (IsClosed) return; //Can't close if we are close. Figures.
+
+			foreach (DoorModuleBase module in modulesList)
+			{
+				if (!module.CanDoorStateChange())
+				{
+					return;
+				}
+			}
+
+			Close();
+		}
+
+		public void TryClose(GameObject originator = null, bool force = false, bool OverrideLogic = false)
 		{
 			// Sliding door is not passable according to matrix
 			if(!isPerformingAction &&
 				(ignorePassableChecks || matrix.CanCloseDoorAt( registerTile.LocalPositionServer, true )) &&
-				HasPower || force)
+				(HasPower || force ) )
+
 			{
-				Close();
+				if (OverrideLogic)
+				{
+					Close();
+				}
+				else
+				{
+					HashSet<DoorProcessingStates> states = new HashSet<DoorProcessingStates>();
+					bool canClose = true;
+					foreach (DoorModuleBase module in modulesList)
+					{
+						ModuleSignal signal = module.OpenInteraction(null, states);
+
+						if (!module.CanDoorStateChange() || signal == ModuleSignal.ContinueWithoutDoorStateChange)
+						{
+							canClose = false;
+						}
+
+						if (signal == ModuleSignal.SkipRemaining)
+						{
+							break;
+						}
+
+						if (signal == ModuleSignal.Break)
+						{
+							ResetWaiting();
+							return;
+						}
+					}
+
+					if (!isPerformingAction && canClose && CheckStatusAllow(states))
+					{
+						Close();
+					}
+					else
+					{
+						ResetWaiting();
+					}
+				}
 			}
 			else
 			{
 				ResetWaiting();
+			}
+
+			if(HasPower == false && originator != null)
+			{
+				Chat.AddExamineMsgFromServer(originator, $"{gameObject.ExpensiveName()} is unpowered");
 			}
 		}
 
@@ -270,8 +402,7 @@ namespace Doors
 			if (!gameObject) return; // probably destroyed by a shuttle crash
 
 			IsClosed = true;
-
-			StartCoroutine(doorAnimator.PlayClosingAnimation(lights: HasPower));
+			UpdateGui();
 
 			if (isPerformingAction)
 			{
@@ -294,12 +425,36 @@ namespace Doors
 			{
 				ResetWaiting();
 			}
+
 			IsClosed = false;
-			StartCoroutine(doorAnimator.PlayOpeningAnimation(lights: HasPower));
+			UpdateGui();
 
 			if (!isPerformingAction)
 			{
 				DoorUpdateMessage.SendToAll( gameObject, DoorUpdateType.Open );
+			}
+		}
+
+		public void BoxCollToggleOn()
+		{
+			IsClosed = true;
+			SetLayer(closedLayer);
+			spriteRenderer.sortingLayerID = closedSortingLayer;
+		}
+
+		public void BoxCollToggleOff()
+		{
+			IsClosed = false;
+			SetLayer(openLayer);
+			spriteRenderer.sortingLayerID = openSortingLayer;
+		}
+
+		private void SetLayer(int layer)
+		{
+			gameObject.layer = layer;
+			foreach (Transform child in transform)
+			{
+				child.gameObject.layer = layer;
 			}
 		}
 
@@ -346,6 +501,7 @@ namespace Doors
 
 			return true;
 		}
+
 
 		public void StartInputCoolDown()
 		{
@@ -405,9 +561,9 @@ namespace Doors
 
 		private void ServerDamageOnClose()
 		{
-			foreach ( LivingHealthBehaviour healthBehaviour in matrix.Get<LivingHealthBehaviour>(registerTile.LocalPositionServer, true) )
+			foreach (var healthBehaviour in matrix.Get<LivingHealthMasterBase>(registerTile.LocalPositionServer, true) )
 			{
-				healthBehaviour.ApplyDamage(gameObject, damageClosed, AttackType.Melee, DamageType.Brute);
+				healthBehaviour.ApplyDamageAll(gameObject, damageClosed, AttackType.Melee, DamageType.Brute);
 			}
 		}
 
@@ -440,5 +596,109 @@ namespace Doors
 				TryClose();
 			}
 		}
+
+		public void ToggleBlockAutoClose(bool newState)
+		{
+			blockAutoClose = newState;
+		}
+
+		#region Ai interaction
+
+		public bool WillInteract(AiActivate interaction, NetworkSide side)
+		{
+			//Normal click should open door UI instead
+			if (interaction.ClickType == AiActivate.ClickTypes.NormalClick) return false;
+
+			if (DefaultWillInteract.AiActivate(interaction, side) == false) return false;
+
+			return true;
+		}
+
+		public void ServerPerformInteraction(AiActivate interaction)
+		{
+			if (HasPower == false)
+			{
+				Chat.AddExamineMsgFromServer(interaction.Performer, "Door is unpowered");
+				return;
+			}
+
+			//Try open/close
+			if (interaction.ClickType == AiActivate.ClickTypes.ShiftClick)
+			{
+				if (IsClosed)
+				{
+					TryForceOpen();
+				}
+				else
+				{
+					TryForceClose();
+				}
+
+				return;
+			}
+
+			//Toggle bolts
+			if (interaction.ClickType == AiActivate.ClickTypes.CtrlClick)
+			{
+				foreach (var module in modulesList)
+				{
+					if(module is BoltsModule bolts)
+					{
+						//Toggle bolts
+						bolts.SetBoltsState(!bolts.BoltsDown);
+						return;
+					}
+				}
+			}
+		}
+
+		#endregion
+
+		#region Airlock UI
+
+		public bool CanOpenNetTab(GameObject playerObject, NetTabType netTabType)
+		{
+			//Only checking airlock, so when hacking UI reimplemented this check wont happen
+			//Return true so it doesnt block those checks
+			//TODO block Ai from hacking UI
+			if (netTabType != NetTabType.Airlock) return true;
+
+			if (HasPower == false)
+			{
+				Chat.AddExamineMsgFromServer(playerObject, "Door is unpowered");
+				return false;
+			}
+
+			//Only allow AI to open airlock control UI
+			return playerObject.GetComponent<PlayerScript>().PlayerState == PlayerScript.PlayerStates.Ai;
+		}
+
+		public void UpdateGui()
+		{
+			var peppers = NetworkTabManager.Instance.GetPeepers(gameObject, NetTabType.Airlock);
+			if(peppers.Count == 0) return;
+
+			List<ElementValue> valuesToSend = new List<ElementValue>();
+
+			valuesToSend.Add(new ElementValue() { Id = "OpenLabel", Value = Encoding.UTF8.GetBytes(IsClosed ? "Closed" : "Open") });
+
+			foreach (var module in modulesList)
+			{
+				if(module is BoltsModule bolts)
+				{
+					valuesToSend.Add(new ElementValue() { Id = "BoltLabel", Value = Encoding.UTF8.GetBytes(bolts.BoltsDown ? "Bolted" : "Unbolted") });
+				}
+
+				if (module is ElectrifiedDoorModule electric)
+				{
+					valuesToSend.Add(new ElementValue() { Id = "ShockStateLabel", Value = Encoding.UTF8.GetBytes(electric.IsElectrecuted ? "DANGER" : "SAFE") });
+				}
+			}
+
+			// Update all UI currently opened.
+			TabUpdateMessage.SendToPeepers(gameObject, NetTabType.Airlock, TabAction.Update, valuesToSend.ToArray());
+		}
+
+		#endregion
 	}
 }

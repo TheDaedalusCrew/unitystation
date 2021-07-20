@@ -408,7 +408,7 @@ public class CableCuttingWindow : MonoBehaviour
 	private bool WillInteract(PositionalHandApply apply)
 	{
 		if (!DefaultWillInteract.Default(apply, NetworkSide.Client)) return false;
-		return Validations.HasItemTrait(UIManager.Hands.CurrentSlot.ItemObject, CommonTraits.Instance.Wirecutter);
+		return Validations.HasItemTrait(PlayerManager.LocalPlayerScript.DynamicItemStorage.GetActiveHandSlot().ItemObject, CommonTraits.Instance.Wirecutter);
 	}
 
 	/// <summary>
@@ -442,7 +442,7 @@ public class CableCuttingWindow : MonoBehaviour
 	/// <summary>
 	/// Message containing data needed for cutting cables
 	/// </summary>
-	public class CableCuttingMessage : MessageBase
+	public struct CableCuttingMessage : NetworkMessage
 	{
 		public GameObject performer;
 		public Vector3 targetWorldPosition;

@@ -13,14 +13,12 @@ public class FireSource : MonoBehaviour, IServerSpawn
 	[Tooltip("Does this fire emit flame from start?")]
 	private bool isBurningOnSpawn = false;
 
-	[Temperature]
 	[SerializeField]
-	[Tooltip("Flame temperature in Kelvins")]
-	private float flameTemperature = 700f;
+	private float hotspotTemperature = 700;
 
 	[SerializeField]
-	[Tooltip("Volume of flamed gas in m3")]
-	public float flameVolume = 0.005f;
+	[Tooltip("Will change temperature of tile to the hotspotTemperature if this temperature is greater than the current gas mix temperature when true")]
+	private bool changeGasMixTemp = false;
 
 	private PushPull pushPull = null;
 	private bool isBurning = false;
@@ -87,7 +85,7 @@ public class FireSource : MonoBehaviour, IServerSpawn
 			if (registerTile)
 			{
 				var reactionManager = registerTile.Matrix.ReactionManager;
-				reactionManager.ExposeHotspotWorldPosition(position.To2Int(), flameTemperature, flameVolume);
+				reactionManager.ExposeHotspotWorldPosition(position.To2Int(), hotspotTemperature, changeGasMixTemp);
 			}
 		}
 	}

@@ -6,12 +6,19 @@ using System.Collections;
 using System.Collections.Generic;
 using System.Linq;
 using UnityEngine;
+using AddressableReferences;
+using DatabaseAPI;
+using Messages.Server;
+using Messages.Server.SoundMessages;
 
 /// <summary>
 /// Provides central access to the Players Health
 /// </summary>
-public class PlayerHealth : LivingHealthBehaviour
+public class PlayerHealth : LivingHealthBehaviour, IRightClickable
 {
+
+	[SerializeField] private AddressableAudioSource SmallElectricShock = null;
+
 	[SerializeField]
 	private MetabolismSystem metabolism = null;
 
@@ -32,7 +39,7 @@ public class PlayerHealth : LivingHealthBehaviour
 	/// <summary>
 	/// Current sicknesses status of the player and their current stage.
 	/// </summary>
-	private PlayerSickness playerSickness = null;
+	private MobSickness mobSickness = null;
 
 	/// <summary>
 	/// List of sicknesses that player has gained immunity.
@@ -47,8 +54,9 @@ public class PlayerHealth : LivingHealthBehaviour
 	/// Cached register player
 	/// </summary>
 	private RegisterPlayer registerPlayer;
+	public RegisterPlayer RegisterPlayer => registerPlayer;
 
-	private ItemStorage itemStorage;
+	private DynamicItemStorage itemStorage;
 
 	private bool init = false;
 
@@ -81,8 +89,8 @@ public class PlayerHealth : LivingHealthBehaviour
 		if (IsDead)
 			return;
 
-		if ((!playerSickness.HasSickness(sickness)) && (!immunedSickness.Contains(sickness)))
-			playerSickness.Add(sickness, Time.time);
+		if ((!mobSickness.HasSickness(sickness)) && (!immunedSickness.Contains(sickness)))
+			mobSickness.Add(sickness, Time.time);
 	}
 
 	/// <summary>
@@ -91,7 +99,7 @@ public class PlayerHealth : LivingHealthBehaviour
 	/// <remarks>Thread safe</remarks>
 	public void RemoveSickness(Sickness sickness)
 	{
-		SicknessAffliction sicknessAffliction = playerSickness.sicknessAfflictions.FirstOrDefault(p => p.Sickness == sickness);
+		SicknessAffliction sicknessAffliction = mobSickness.sicknessAfflictions.FirstOrDefault(p => p.Sickness == sickness);
 
 		if (sicknessAffliction)
 			sicknessAffliction.Heal();
@@ -109,17 +117,18 @@ public class PlayerHealth : LivingHealthBehaviour
 	}
 
 
-	void EnsureInit()
+	private new void EnsureInit()
 	{
 		if (init) return;
-
 		init = true;
+		base.EnsureInit();
+
 		playerNetworkActions = GetComponent<PlayerNetworkActions>();
 		PlayerMove = GetComponent<PlayerMove>();
 		playerSprites = GetComponent<PlayerSprites>();
 		registerPlayer = GetComponent<RegisterPlayer>();
-		itemStorage = GetComponent<ItemStorage>();
-		playerSickness = GetComponent<PlayerSickness>();
+		itemStorage = GetComponent<DynamicItemStorage>();
+		mobSickness = GetComponent<MobSickness>();
 
 		OnConsciousStateChangeServer.AddListener(OnPlayerConsciousStateChangeServer);
 
@@ -185,17 +194,25 @@ public class PlayerHealth : LivingHealthBehaviour
 			//drop items in hand
 			if (itemStorage != null)
 			{
-				Inventory.ServerDrop(itemStorage.GetNamedItemSlot(NamedSlot.leftHand));
-				Inventory.ServerDrop(itemStorage.GetNamedItemSlot(NamedSlot.rightHand));
+				foreach (var itemSlot in itemStorage.GetNamedItemSlots(NamedSlot.leftHand))
+				{
+					Inventory.ServerDrop(itemSlot);
+				}
+
+				foreach (var itemSlot in itemStorage.GetNamedItemSlots(NamedSlot.rightHand))
+				{
+					Inventory.ServerDrop(itemSlot);
+				}
 			}
 
 			if (isServer)
 			{
-				EffectsFactory.BloodSplat(transform.position, BloodSplatSize.large, bloodColor);
+				//TODO: Re - impliment this using the new reagent- first code introduced in PR #6810
+				//EffectsFactory.BloodSplat(transform.position, BloodSplatSize.large, bloodColor);
 				string descriptor = null;
 				if (player != null)
 				{
-					descriptor = player.CharacterSettings?.TheirPronoun();
+					descriptor = player.CharacterSettings?.TheirPronoun(player.Script);
 				}
 
 				if (descriptor == null)
@@ -206,7 +223,7 @@ public class PlayerHealth : LivingHealthBehaviour
 				Chat.AddLocalMsgToChat($"<b>{playerName}</b> seizes up and falls limp, {descriptor} eyes dead and lifeless...", gameObject);
 			}
 
-			PlayerDeathMessage.Send(gameObject);
+			TriggerEventMessage.SendTo(gameObject, Event.PlayerDied);
 		}
 	}
 
@@ -231,7 +248,8 @@ public class PlayerHealth : LivingHealthBehaviour
 	protected override void Gib()
 	{
 		Death();
-		EffectsFactory.BloodSplat(transform.position, BloodSplatSize.large, bloodColor);
+		//TODO: Re - impliment this using the new reagent- first code introduced in PR #6810
+		//EffectsFactory.BloodSplat(transform.position, BloodSplatSize.large, bloodColor);
 		//drop clothes, gib... but don't destroy actual player, a piece should remain
 
 		//drop everything
@@ -276,14 +294,14 @@ public class PlayerHealth : LivingHealthBehaviour
 	/// <returns>Returns an ElectrocutionSeverity for when the following logic depends on the elctrocution severity.</returns>
 	public override LivingShockResponse Electrocute(Electrocution electrocution)
 	{
-		if (playerNetworkActions.activeHand == NamedSlot.leftHand)
-		{
-			electrocutedHand = BodyPartType.LeftArm;
-		}
-		else
-		{
-			electrocutedHand = BodyPartType.RightArm;
-		}
+		// if (playerNetworkActions.activeHand == NamedSlot.leftHand)
+		// {
+			// electrocutedHand = BodyPartType.LeftArm;
+		// }
+		// else
+		// {
+			// electrocutedHand = BodyPartType.RightArm;
+		// }
 
 		return base.Electrocute(electrocution);
 	}
@@ -314,8 +332,16 @@ public class PlayerHealth : LivingHealthBehaviour
 		float resistance = GetNakedHumanoidElectricalResistance(voltage);
 
 		// Give the humanoid extra/less electrical resistance based on what they're holding/wearing
-		resistance += Electrocution.GetItemElectricalResistance(itemStorage.GetNamedItemSlot(NamedSlot.hands).ItemObject);
-		resistance += Electrocution.GetItemElectricalResistance(itemStorage.GetNamedItemSlot(NamedSlot.feet).ItemObject);
+		foreach (var itemSlot in itemStorage.GetNamedItemSlots(NamedSlot.hands))
+		{
+			resistance += Electrocution.GetItemElectricalResistance(itemSlot.ItemObject);
+		}
+
+		foreach (var itemSlot in itemStorage.GetNamedItemSlots(NamedSlot.feet))
+		{
+			resistance += Electrocution.GetItemElectricalResistance(itemSlot.ItemObject);
+		}
+
 		// A solid grip on a conductive item will reduce resistance - assuming it is conductive.
 		if (itemStorage.GetActiveHandSlot().Item != null) resistance -= 300;
 
@@ -335,23 +361,25 @@ public class PlayerHealth : LivingHealthBehaviour
 	/// <param name="bodypart">The BodyPartType to damage.</param>
 	private void DealElectrocutionDamage(float damage, BodyPartType bodypart)
 	{
-		ApplyDamageToBodypart(null, damage, AttackType.Internal, DamageType.Burn, bodypart);
+		ApplyDamageToBodyPart(null, damage, AttackType.Internal, DamageType.Burn, bodypart);
 	}
 
 	protected override void MildElectrocution(Electrocution electrocution, float shockPower)
 	{
-		SoundManager.PlayNetworkedAtPos("SmallElectricShock#", registerPlayer.WorldPosition);
+		SoundManager.PlayNetworkedAtPos(SmallElectricShock, registerPlayer.WorldPosition);
 		Chat.AddExamineMsgFromServer(gameObject, $"The {electrocution.ShockSourceName} gives you a slight tingling sensation...");
 	}
 
 	protected override void PainfulElectrocution(Electrocution electrocution, float shockPower)
 	{
 		// TODO: Add sparks VFX at shockSourcePos.
-		SoundManager.PlayNetworkedAtPos("Sparks#", electrocution.ShockSourcePos);
+		SoundManager.PlayNetworkedAtPos(SingletonSOSounds.Instance.Sparks, electrocution.ShockSourcePos);
 		Inventory.ServerDrop(itemStorage.GetActiveHandSlot());
+
 		// Slip is essentially a yelp SFX.
-		SoundManager.PlayNetworkedAtPos("Slip", registerPlayer.WorldPosition,
-				UnityEngine.Random.Range(0.4f, 1.2f), sourceObj: gameObject);
+		AudioSourceParameters audioSourceParameters = new AudioSourceParameters(pitch: UnityEngine.Random.Range(0.4f, 1.2f));
+		SoundManager.PlayNetworkedAtPos(SingletonSOSounds.Instance.Slip, registerPlayer.WorldPosition,
+				audioSourceParameters, sourceObj: gameObject);
 
 		string victimChatString = (electrocution.ShockSourceName != null ? $"The {electrocution.ShockSourceName}" : "Something") +
 				" gives you a small electric shock!";
@@ -365,7 +393,7 @@ public class PlayerHealth : LivingHealthBehaviour
 
 		PlayerMove.allowInput = false;
 		// TODO: Add sparks VFX at shockSourcePos.
-		SoundManager.PlayNetworkedAtPos("Sparks#", electrocution.ShockSourcePos);
+		SoundManager.PlayNetworkedAtPos(SingletonSOSounds.Instance.Sparks, electrocution.ShockSourcePos);
 		StartCoroutine(ElectrocutionSequence());
 
 		string victimChatString, observerChatString;
@@ -399,8 +427,10 @@ public class PlayerHealth : LivingHealthBehaviour
 		yield return WaitFor.Seconds(timeBeforeDrop); // Instantly dropping to ground looks odd.
 													  // TODO: Add sparks VFX at shockSourcePos.
 		registerPlayer.ServerStun(ELECTROCUTION_STUN_PERIOD - timeBeforeDrop);
-		SoundManager.PlayNetworkedAtPos("Bodyfall", registerPlayer.WorldPosition,
-				UnityEngine.Random.Range(0.8f, 1.2f), sourceObj: gameObject);
+
+		AudioSourceParameters audioSourceParameters = new AudioSourceParameters(pitch: UnityEngine.Random.Range(0.8f, 1.2f));
+		SoundManager.PlayNetworkedAtPos(SingletonSOSounds.Instance.Bodyfall, registerPlayer.WorldPosition,
+				audioSourceParameters, sourceObj: gameObject);
 
 		yield return WaitFor.Seconds(ELECTROCUTION_ANIM_PERIOD - timeBeforeDrop);
 		RpcToggleElectrocutedOverlay();
@@ -416,4 +446,20 @@ public class PlayerHealth : LivingHealthBehaviour
 	}
 
 	#endregion Electrocution
+
+	public RightClickableResult GenerateRightClickOptions()
+	{
+		if (string.IsNullOrEmpty(PlayerList.Instance.AdminToken) || !KeyboardInputManager.Instance.CheckKeyAction(KeyAction.ShowAdminOptions, KeyboardInputManager.KeyEventType.Hold))
+		{
+			return null;
+		}
+
+		return RightClickableResult.Create()
+			.AddAdminElement("Gib Player", AdminGibPlayer);
+	}
+
+	private void AdminGibPlayer()
+	{
+		//PlayerManager.PlayerScript.playerNetworkActions.CmdAdminGib(gameObject, ServerData.UserID, PlayerList.Instance.AdminToken);
+	}
 }

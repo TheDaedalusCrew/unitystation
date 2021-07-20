@@ -15,7 +15,11 @@
         "Logger",
         "GameInfo",
         "Lighting",
-        "LeanTween"
+        "LeanTween",
+        "Unity.Addressables",
+        "Unity.ResourceManager",
+        "SpriteProcessing",
+        "Unity.MemoryProfiler"
     ],
     "includePlatforms": [],
     "excludePlatforms": [],

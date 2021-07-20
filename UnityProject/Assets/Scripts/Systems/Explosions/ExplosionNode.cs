@@ -1,5 +1,8 @@
 ﻿using System.Collections;
 using System.Collections.Generic;
+using HealthV2;
+using Items;
+using Light2D;
 using UnityEngine;
 
 namespace Systems.Explosions
@@ -34,7 +37,7 @@ namespace Systems.Explosions
 			}
 
 			EnergyExpended = metaTileMap.ApplyDamage(v3int, Damagedealt,
-			MatrixManager.LocalToWorldInt(v3int, matrix.MatrixInfo), AttackType.Bomb) * 0.375f;
+			MatrixManager.LocalToWorldInt(v3int, matrix.MatrixInfo), AttackType.Bomb);
 
 			if (Damagedealt > 100)
 			{
@@ -59,6 +62,21 @@ namespace Systems.Explosions
 			foreach (var integrity in matrix.Get<Integrity>(v3int, true))
 			{
 				//Throw items
+				if(integrity.GetComponent<ItemAttributesV2>() != null)
+				{
+					ThrowInfo throwInfo = new ThrowInfo
+					{
+						//the thrown object is itself for now, in case ThrownBy breaks if null
+						ThrownBy = integrity.gameObject,
+						Aim = BodyPartType.Chest,
+						OriginWorldPos = integrity.RegisterTile.WorldPosition,
+						WorldTrajectory = AngleAndIntensity.Rotate90(),
+						SpinMode = RandomUtils.RandomSpin()
+					};
+
+					integrity.GetComponent<CustomNetTransform>().Throw(throwInfo);
+				}
+
 				//And do damage to objects
 				integrity.ApplyDamage(Damagedealt, AttackType.Bomb, DamageType.Brute);
 			}
@@ -67,7 +85,7 @@ namespace Systems.Explosions
 			{
 
 				// do damage
-				player.GetComponent<PlayerHealth>().ApplyDamage(null, Damagedealt, AttackType.Bomb, DamageType.Brute);
+				player.GetComponent<PlayerHealthV2>().ApplyDamageAll(null, Damagedealt, AttackType.Bomb, DamageType.Brute);
 
 			}
 

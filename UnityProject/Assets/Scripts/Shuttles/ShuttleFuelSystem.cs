@@ -10,7 +10,7 @@ namespace Systems.Shuttles
 	/// <summary>
 	/// Used to monitor the fuel level and to remove fuel from the canister and also stop the shuttle if the fuel has run out
 	/// </summary>
-	public class ShuttleFuelSystem : ManagedNetworkBehaviour
+	public class ShuttleFuelSystem : MonoBehaviour
 	{
 		public float FuelLevel;
 		public ShuttleFuelConnector Connector;
@@ -23,21 +23,31 @@ namespace Systems.Shuttles
 		public float optimumMassConsumption = 0.05f;
 
 
-		protected override void OnEnable()
+		protected void OnEnable()
 		{
-			base.OnEnable();
 			if (MatrixMove == null)
 			{
 				MatrixMove = this.GetComponent<MatrixMove>();
 				MatrixMove.RegisterShuttleFuelSystem(this);
 			}
+
+			if(CustomNetworkManager.IsServer == false) return;
+
+			UpdateManager.Add(CallbackType.UPDATE, UpdateMe);
 		}
 
-		public override void UpdateMe()
+		private void OnDisable()
+		{
+			if(CustomNetworkManager.IsServer == false) return;
+
+			UpdateManager.Remove(CallbackType.UPDATE, UpdateMe);
+		}
+
+		private void UpdateMe()
 		{
 			if (Connector == null)
 			{
-				Logger.LogError($"{nameof(Connector)} was null on {this}!");
+				//Logger.LogError($"{nameof(Connector)} was null on {this}!");
 				return;
 			}
 
@@ -115,13 +125,13 @@ namespace Systems.Shuttles
 			if (IsFuelledOptimum())
 			{
 				//Logger.Log("CalculatedMassConsumption > " + CalculatedMassConsumption*MassConsumption);
-				Connector.canister.GasContainer.GasMix = Connector.canister.GasContainer.GasMix.RemoveGasReturn(Gas.Plasma, CalculatedMassConsumption * MassConsumption * (0.7f));
-				Connector.canister.GasContainer.GasMix = Connector.canister.GasContainer.GasMix.RemoveGasReturn(Gas.Oxygen, CalculatedMassConsumption * MassConsumption * (0.3f));
+				Connector.canister.GasContainer.GasMix.RemoveGas(Gas.Plasma, CalculatedMassConsumption * MassConsumption * (0.7f));
+				Connector.canister.GasContainer.GasMix.RemoveGas(Gas.Oxygen, CalculatedMassConsumption * MassConsumption * (0.3f));
 			}
 			else if (Connector.canister.GasContainer.GasMix.GetMoles(Gas.Plasma) > MassConsumption * FuelConsumption)
 			{
 				//Logger.Log("Full-back > " + (FuelConsumption * MassConsumption));
-				Connector.canister.GasContainer.GasMix = Connector.canister.GasContainer.GasMix.RemoveGasReturn(Gas.Plasma, (MassConsumption * FuelConsumption));
+				Connector.canister.GasContainer.GasMix.RemoveGas(Gas.Plasma, (MassConsumption * FuelConsumption));
 			}
 			else
 			{

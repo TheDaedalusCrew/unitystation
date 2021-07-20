@@ -5,6 +5,7 @@ using UnityEngine.SceneManagement;
 using WebSocketSharp;
 using UnityEngine;
 using System.Linq;
+using Messages.Server.SubScenes;
 
 //The scene list on the server
 public partial class SubSceneManager
@@ -12,10 +13,7 @@ public partial class SubSceneManager
 	private string serverChosenAwaySite = "loading";
 	private string serverChosenMainStation = "loading";
 
-	public static string ServerChosenMainStation
-	{
-		get { return Instance.serverChosenMainStation; }
-	}
+	public static string ServerChosenMainStation => Instance.serverChosenMainStation;
 
 	public static string AdminForcedMainStation = "Random";
 	public static string AdminForcedAwaySite = "Random";
@@ -27,6 +25,11 @@ public partial class SubSceneManager
 		//calculate load time:
 		loadTimer.MaxLoadTime = 20f + (asteroidList.Asteroids.Count * 10f);
 		loadTimer.IncrementLoadBar("Preparing..");
+
+		while (AddressableCatalogueManager.FinishLoaded == false)
+		{
+			yield return null;
+		}
 
 		//Choose and load a mainstation
 		yield return StartCoroutine(ServerLoadMainStation(loadTimer));
@@ -41,15 +44,14 @@ public partial class SubSceneManager
 			yield return StartCoroutine(ServerLoadCentCom(loadTimer));
 			//Load Additional Scenes:
 			yield return StartCoroutine(ServerLoadAdditionalScenes(loadTimer));
-
 		}
 
 		netIdentity.isDirty = true;
 
 		yield return WaitFor.Seconds(0.1f);
 		UIManager.Display.preRoundWindow.CloseMapLoadingPanel();
-
-		Logger.Log($"Server has loaded {serverChosenAwaySite} away site", Category.SubScenes);
+		EventManager.Broadcast( Event.ScenesLoadedServer, false);
+		Logger.Log($"Server has loaded {serverChosenAwaySite} away site", Category.Round);
 	}
 
 	//Choose and load a main station on the server
@@ -58,7 +60,7 @@ public partial class SubSceneManager
 		MainStationLoaded = true;
 		//Auto scene load stuff in editor:
 		var prevEditorScene = GetEditorPrevScene();
-		if (mainStationList.MainStations.Contains(prevEditorScene) && AdminForcedMainStation == "Random")
+		if ((prevEditorScene != "") && AdminForcedMainStation == "Random")
 		{
 			serverChosenMainStation = prevEditorScene;
 		}
@@ -240,6 +242,7 @@ public partial class SubSceneManager
 		});
 
 		PokeClientSubScene.SendToAll( pickedMap);
+		SyndicateScene = SceneManager.GetSceneByName(pickedMap);
 		yield return StartCoroutine(RunOnSpawnServer(pickedMap));
 		SyndicateLoaded = true;
 	}

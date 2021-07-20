@@ -1,15 +1,16 @@
 ﻿using System;
 using System.Collections;
 using System.Collections.Generic;
+using Items;
 using UnityEngine;
 using Mirror;
 using UI.Action;
 
-public class ItemMagBoots : NetworkBehaviour, IServerInventoryMove
+public class ItemMagBoots : NetworkBehaviour, IServerInventoryMove, PlayerMove.IMovementEffect
 {
 	[Tooltip("The speed debuff to apply to run speed.")]
 	[SerializeField]
-	private float runSpeedDebuff = 1.5f;
+	private float runSpeedDebuff = -1.5f;
 
 	private SpriteHandler spriteHandler;
 	private ItemAttributesV2 itemAttributesV2;
@@ -18,6 +19,26 @@ public class ItemMagBoots : NetworkBehaviour, IServerInventoryMove
 	private ItemActionButton actionButton;
 
 	private bool isOn = false;
+
+	public float RunningAdd {
+		get => runSpeedDebuff;
+		set { }
+	}
+
+	public float WalkingAdd {
+		get => 0;
+		set { }
+	}
+
+
+	public float CrawlAdd
+	{
+		get => 0;
+		set { }
+	}
+
+
+
 
 	private enum SpriteState
 	{
@@ -38,13 +59,11 @@ public class ItemMagBoots : NetworkBehaviour, IServerInventoryMove
 
 	private void OnEnable()
 	{
-		actionButton.ClientActionClicked += ClientUpdateActionSprite;
 		actionButton.ServerActionClicked += ToggleState;
 	}
 
 	private void OnDisable()
 	{
-		actionButton.ClientActionClicked -= ClientUpdateActionSprite;
 		actionButton.ServerActionClicked -= ToggleState;
 	}
 
@@ -79,11 +98,6 @@ public class ItemMagBoots : NetworkBehaviour, IServerInventoryMove
 		}
 	}
 
-	private void ClientUpdateActionSprite()
-	{
-		spriteHandler.ChangeSprite(isOn ? (int) SpriteState.Off : (int) SpriteState.On);
-	}
-
 	private void ToggleOn()
 	{
 		isOn = true;
@@ -103,14 +117,14 @@ public class ItemMagBoots : NetworkBehaviour, IServerInventoryMove
 	private void ApplyEffect()
 	{
 		itemAttributesV2.AddTrait(CommonTraits.Instance.NoSlip);
-		playerMove.ServerChangeSpeed(playerMove.RunSpeed - runSpeedDebuff, playerMove.WalkSpeed);
+		playerMove.AddModifier(this);
 		playerMove.PlayerScript.pushPull.ServerSetPushable(false);
 	}
 
 	private void RemoveEffect()
 	{
 		itemAttributesV2.RemoveTrait(CommonTraits.Instance.NoSlip);
-		playerMove.ServerChangeSpeed(playerMove.RunSpeed + runSpeedDebuff, playerMove.WalkSpeed);
+		playerMove.RemoveModifier(this);
 		playerMove.PlayerScript.pushPull.ServerSetPushable(true);
 	}
 }

@@ -4,11 +4,10 @@ using System.Collections.Generic;
 using Systems.Atmospherics;
 using Chemistry;
 using UnityEngine;
-using Systems.Atmospherics;
 
 namespace Pipes
 {
-	[System.Serializable]
+	[Serializable]
 	public class PipeData
 	{
 		public PipeLayer PipeLayer = PipeLayer.Second;
@@ -31,12 +30,13 @@ namespace Pipes
 				else
 				{
 					return (mixAndVolume);
+
 				}
 			}
 		}
 
 
-		public List<PipeData> ConnectedPipes = new List<PipeData>();
+		[NonSerialized] public List<PipeData> ConnectedPipes = new List<PipeData>();
 		public List<PipeData> Outputs = new List<PipeData>(); //Make sure to redirect to net if there is existence
 
 		public PipeNode pipeNode;
@@ -55,7 +55,7 @@ namespace Pipes
 					return (MonoPipe.MatrixPos);
 				}
 
-				Logger.Log("Vector3Int null!!");
+				Logger.Log("Vector3Int null!!", Category.Pipes);
 				return (Vector3Int.zero);
 			}
 		}
@@ -73,7 +73,7 @@ namespace Pipes
 					return (MonoPipe.Matrix);
 				}
 
-				Logger.Log("Matrix null!!");
+				Logger.Log("Matrix null!!", Category.Pipes);
 				return (null);
 			}
 		}
@@ -86,7 +86,7 @@ namespace Pipes
 				PipeAction.pipeData = this;
 			}
 
-			AtmosManager.Instance.inGameNewPipes.Add(this);
+			AtmosManager.Instance.AddPipe(this);
 			ConnectedPipes =
 				PipeFunctions.GetConnectedPipes(ConnectedPipes, this, MatrixPos, matrix);
 
@@ -139,7 +139,7 @@ namespace Pipes
 
 		public virtual void OnDisable()
 		{
-			AtmosManager.Instance.inGameNewPipes.Remove(this);
+			AtmosManager.Instance.RemovePipe(this);
 			foreach (var Pipe in ConnectedPipes)
 			{
 				if(Pipe == null) continue;
@@ -168,7 +168,7 @@ namespace Pipes
 
 						// this one probably require more work than just null check
 						if(Pipe.OnNet == null)
-							Logger.LogWarning("Pipe.OnNet == null", Category.Atmos);
+							Logger.LogWarning("Pipe.OnNet == null", Category.Pipes);
 						else
 							Pipe.OnNet.RemoveEqualiseWith(this);
 					}
@@ -205,16 +205,20 @@ namespace Pipes
 			}
 
 			ZeroedLocation.z = 0;
+
 			var tileWorldPosition = MatrixManager.LocalToWorld(ZeroedLocation, matrix).RoundToInt();
-			MatrixManager.ReagentReact(ToSpill.Item1, tileWorldPosition);
-			MetaDataLayer metaDataLayer = MatrixManager.AtPoint(tileWorldPosition, true).MetaDataLayer;
+			var matrixInfo = MatrixManager.AtPoint(tileWorldPosition, true);
+
+			MatrixManager.ReagentReact(ToSpill.Item1, tileWorldPosition, matrixInfo);
+
+			MetaDataLayer metaDataLayer = matrixInfo.MetaDataLayer;
 			if (pipeNode != null)
 			{
-				pipeNode.IsOn.GasMix += ToSpill.Item2;
+				GasMix.TransferGas(pipeNode.IsOn.GasMix, ToSpill.Item2, ToSpill.Item2.Moles);
 			}
 			else
 			{
-				matrix.GetMetaDataNode(ZeroedLocation).GasMix += ToSpill.Item2;
+				GasMix.TransferGas(matrix.GetMetaDataNode(ZeroedLocation).GasMix, ToSpill.Item2, ToSpill.Item2.Moles);
 			}
 			metaDataLayer.UpdateSystemsAt(ZeroedLocation, SystemType.AtmosSystem);
 		}

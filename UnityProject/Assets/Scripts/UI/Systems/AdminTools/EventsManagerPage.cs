@@ -9,6 +9,7 @@ using AdminTools;
 using AdminCommands;
 using Assets.Scripts.UI.AdminTools;
 using System.Linq;
+using Messages.Client.Admin;
 
 public class EventsManagerPage : AdminPage
 {
@@ -17,9 +18,6 @@ public class EventsManagerPage : AdminPage
 
 	[SerializeField]
 	private Dropdown eventTypeDropDown = null;
-
-	[SerializeField]
-	private Button triggerEvent = null; // TODO: this is unused and is creating a compiler warning.
 
 	[SerializeField]
 	private Toggle isFakeToggle = null;
@@ -44,7 +42,8 @@ public class EventsManagerPage : AdminPage
 
 	public void TriggerEvent()
 	{
-		if (!InGameEventType.TryParse(eventTypeDropDown.options[eventTypeDropDown.value].text, out InGameEventType eventType)) return;
+		if (!InGameEventType.TryParse(eventTypeDropDown.options[eventTypeDropDown.value].text,
+			out InGameEventType eventType)) return;
 
 		var index = nextDropDown.value;
 
@@ -59,18 +58,23 @@ public class EventsManagerPage : AdminPage
 			List<EventScriptBase> listEvents = InGameEventsManager.Instance.GetListFromEnum(eventType);
 			if (listEvents[index - 1].parametersPageType != ParametersPageType.None)
 			{
-				GameObject parameterPage = eventsParametersPages.eventParameterPages.FirstOrDefault(p => p.ParametersPageType == listEvents[index - 1].parametersPageType).ParameterPage;
+				GameObject parameterPage = eventsParametersPages.eventParameterPages
+					.FirstOrDefault(p => p.ParametersPageType == listEvents[index - 1].parametersPageType)
+					.ParameterPage;
 
 				if (parameterPage)
 				{
 					parameterPage.SetActive(true);
-					parameterPage.GetComponent<SicknessParametersPage>().SetBasicEventParameters(index, isFakeToggle.isOn, announceToggle.isOn, InGameEventType.Fun);
+					parameterPage.GetComponent<SicknessParametersPage>().SetBasicEventParameters(index,
+						isFakeToggle.isOn, announceToggle.isOn, InGameEventType.Fun);
 					return;
 				}
 			}
 		}
-		
-		ServerCommandVersionFourMessageClient.Send(ServerData.UserID, PlayerList.Instance.AdminToken, index, isFakeToggle.isOn, announceToggle.isOn, eventType, "CmdTriggerGameEvent");
+
+		AdminCommandsManager.Instance.CmdTriggerGameEvent(ServerData.UserID, PlayerList.Instance.AdminToken, index,
+			isFakeToggle.isOn, announceToggle.isOn, eventType, null);
+
 	}
 
 	public void ToggleRandomEvents()

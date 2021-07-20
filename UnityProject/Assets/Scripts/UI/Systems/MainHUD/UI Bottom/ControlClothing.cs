@@ -6,13 +6,13 @@ using UnityEngine.EventSystems;
 	public class ControlClothing : TooltipMonoBehaviour
 	{
 		public GameObject retractableGroup;
-		private Image[] equipImgs = new Image[0];
-		private UI_ItemSlot[] itemSlots;
 		public GameObject hideOnRetract;
 		private bool isOpen;
 
-		[SerializeField] private GameObject openButtonImage;
-		[SerializeField] private GameObject closeButtonImage;
+		public GameObject ObjectToHide;
+
+		[SerializeField] private GameObject openButtonImage = default;
+		[SerializeField] private GameObject closeButtonImage = default;
 		/// <summary>
 		/// Whether the expandable clothing menu is open
 		/// </summary>
@@ -22,26 +22,14 @@ using UnityEngine.EventSystems;
 		private void Start()
 		{
 			isOpen = false;
-			if ( retractableGroup )
-			{
-				equipImgs = retractableGroup.GetComponentsInChildren<Image>();
-				itemSlots = retractableGroup.GetComponentsInChildren<UI_ItemSlot>();
-			}
 			ToggleEquipMenu(false);
 		}
 
 		public void RolloutEquipmentMenu()
 		{
-			SoundManager.Play("Click01");
+			_ = SoundManager.Play(SingletonSOSounds.Instance.Click01);
 
-			if (isOpen)
-			{
-				ToggleEquipMenu(false);
-			}
-			else
-			{
-				ToggleEquipMenu(true);
-			}
+			ToggleEquipMenu(isOpen == false);
 		}
 
 		private void ToggleEquipMenu(bool isOn)
@@ -52,29 +40,11 @@ using UnityEngine.EventSystems;
 			//TODO: This needs to hide the slots better
 			if (isOn)
 			{
-				//Adjusting the alpha to hide the slots as the enabled state is handled
-				//by other components. Raycast target is also adjusted based on on or off
-				for (int i = 0; i < equipImgs.Length; i++)
-				{
-					Color tempCol = equipImgs[i].color;
-					tempCol.a = 1f;
-					equipImgs[i].color = tempCol;
-					equipImgs[i].raycastTarget = true;
-				}
+				ObjectToHide.SetActive(true);
 			}
 			else
 			{
-				for (int i = 0; i < equipImgs.Length; i++)
-				{
-					Color tempCol = equipImgs[i].color;
-					tempCol.a = 0f;
-					equipImgs[i].color = tempCol;
-					equipImgs[i].raycastTarget = false;
-				}
-			}
-			foreach (var itemSlot in itemSlots)
-			{
-				itemSlot.SetHidden(!isOpen);
+				ObjectToHide.SetActive(false);
 			}
 			if ( hideOnRetract != null )
 			{

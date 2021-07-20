@@ -4,6 +4,12 @@ using System.Collections.Generic;
 using UnityEngine;
 using Mirror;
 using Systems.Electricity;
+using AddressableReferences;
+using Audio.Containers;
+using Items;
+using Machines;
+using Messages.Server.SoundMessages;
+using Objects.Machines;
 
 namespace Objects.Kitchen
 {
@@ -13,21 +19,32 @@ namespace Objects.Kitchen
 	/// Otherwise, any food item that doesn't have the cookable component will be cooked using
 	/// the legacy way, of converting to cooked when the microwave's timer finishes.
 	/// </summary>
-	public class Microwave : NetworkBehaviour, IAPCPowered
+	public class Microwave : NetworkBehaviour, IAPCPowerable
 	{
 		private const int MAX_TIMER_TIME = 60; // Seconds
 		private const float DIRTY_CHANCE_PER_FINISH = 10; // Percent
-		private const string DOOR_SOUND = "Punch#"; // SFX the microwave door should make when opening/closing.
-		private const string TIMER_BEEP = "Beep"; // Beep to play when timer time is added/removed.
+
+		[SerializeField]
+		private AudioClipsArray doorSFX = null; // SFX the microwave door should make when opening/closing.
+
+		[SerializeField]
+		private AddressableAudioSource timerBeepSFX = null; // Beep to play when timer time is added/removed.
+
+		[SerializeField]
+		private AddressableAudioSource doneDingSFX = null; // Beep to play when timer time is added/removed.
 
 		[SerializeField]
 		[Range(0, MAX_TIMER_TIME)]
 		[Tooltip("Default time the microwave should reset to when finished (in seconds). Should be set to a value that will cook most items.")]
 		private float DefaultTimerTime = 10;
 
+		[SerializeField] private AddressableAudioSource startSFX = null;
+
 		[SerializeField]
 		[Tooltip("The looped audio source to play while the microwave is running.")]
-		private AudioSource RunningAudio = default;
+		private AddressableAudioSource RunningAudio = default;
+
+		private string runLoopGUID = "";
 
 		[SerializeField]
 		[Tooltip("Child GameObject that is responsible for the screen glow.")]
@@ -36,6 +53,10 @@ namespace Objects.Kitchen
 		[SerializeField]
 		[Tooltip("Child GameObject that is responsible for the glow from the interior oven when the door is open.")]
 		private GameObject OvenGlow = default;
+
+		[SerializeField]
+		[Tooltip("Storage structure to use for tier 1-4 matter bins.")]
+		private ItemStorageStructure[] TierStorage = new ItemStorageStructure[4];
 
 		/// <summary>
 		/// How much time remains on the microwave's timer.
@@ -59,6 +80,10 @@ namespace Objects.Kitchen
 
 		public MicrowaveState currentState;
 
+		// Stock Part Tier.
+		private int laserTier;
+
+
 		#region Lifecycle
 
 		private void Awake()
@@ -73,6 +98,32 @@ namespace Objects.Kitchen
 			storage = GetComponent<ItemStorage>();
 
 			SetState(new MicrowaveIdle(this));
+
+			// Get the machine stock parts used in this instance and get the tier of each part.
+
+			IDictionary<GameObject, int> builtParts = GetComponent<Machine>().PartsInFrame;
+
+			ICollection<GameObject> parts = builtParts.Keys;
+
+			ItemAttributesV2 partAttributes;
+
+			// Collection is unorganized so run through the whole list.
+			foreach (GameObject part in parts)
+			{
+				partAttributes = part.GetComponent<ItemAttributesV2>();
+				if (partAttributes.HasTrait(MachinePartsItemTraits.Instance.MicroLaser))
+				{
+					laserTier = part.GetComponent<StockTier>().Tier;
+				}
+
+				if (partAttributes.HasTrait(MachinePartsItemTraits.Instance.MatterBin))
+				{
+					int binTier = part.GetComponent<StockTier>().Tier;
+
+					// Decide ItemStorageStructure based on tier. Currently: slot size == matter bin tier.
+					storage.AcceptNewStructure(TierStorage[binTier-1]);
+				}
+			}
 		}
 
 		private void Start()
@@ -86,7 +137,7 @@ namespace Objects.Kitchen
 			UpdateManager.Remove(CallbackType.UPDATE, UpdateMe);
 		}
 
-		#endregion Lifecycle
+		#endregion
 
 		/// <summary>
 		/// Reduce the microwave's timer, add that time to food cooking.
@@ -95,7 +146,7 @@ namespace Objects.Kitchen
 		{
 			if (!IsOperating) return;
 
-			microwaveTimer -= Time.deltaTime;
+			microwaveTimer -= Time.deltaTime*LaserTierTimeEffect();
 
 			if (microwaveTimer <= 0)
 			{
@@ -104,6 +155,23 @@ namespace Objects.Kitchen
 			}
 
 			CheckCooked();
+		}
+
+		/// <summary>
+		/// The micro-laser's tier affects the speed in which the microwave counts down and the speed
+		/// in which food is cooked. For each tier above one, cook time is decreased by a factor of 0.5;
+		/// </summary>
+		private float LaserTierTimeEffect()
+		{
+			return (float)Math.Pow(2, ((double)laserTier - 1));
+		}
+
+		/// <summary>
+		/// Return the size of the storage.
+		/// </summary>
+		public int StorageSize()
+		{
+			return storage.StorageSize();
 		}
 
 		private void SetState(MicrowaveState newState)
@@ -140,47 +208,42 @@ namespace Objects.Kitchen
 			currentState.AddTime(seconds);
 		}
 
-		/// <summary>
-		/// Part of interface IAPCPowered. Sets the microwave's state according to the given power state.
-		/// </summary>
-		/// <param name="state">The power state to set the microwave's state with.</param>
-		public void StateUpdate(PowerStates state)
-		{
-			EnsureInit(); // This method could be called before the component's Awake().
-			currentState.PowerStateUpdate(state);
-		}
-
-		#endregion Requests
+		#endregion
 
 		private void TransferToMicrowaveAndClose(ItemSlot fromSlot)
 		{
 			if (fromSlot == null || fromSlot.IsEmpty) return;
-			if (!Inventory.ServerTransfer(fromSlot, storageSlot)) return;
+			if (!Inventory.ServerTransfer(fromSlot, storage.GetNextFreeIndexedSlot())) return;
 			if (storageSlot.ItemObject.TryGetComponent(out Cookable cookable))
 			{
 				storedCookable = cookable;
 			}
-
-			SoundManager.PlayNetworkedAtPos(DOOR_SOUND, WorldPosition, sourceObj: gameObject);
 		}
 
 		private void OpenMicrowaveAndEjectContents()
 		{
-			SoundManager.PlayNetworkedAtPos(DOOR_SOUND, WorldPosition, sourceObj: gameObject);
+			SoundManager.PlayNetworkedAtPos(doorSFX.GetRandomClip(), WorldPosition, sourceObj: gameObject);
 
 			Vector2 spritePosWorld = spriteHandler.transform.position;
 			Vector2 microwaveInteriorCenterAbs = spritePosWorld + new Vector2(-0.075f, -0.075f);
 			Vector2 microwaveInteriorCenterRel = microwaveInteriorCenterAbs - WorldPosition.To2Int();
 
 			// Looks nicer if we drop the item in the middle of the sprite's representation of the microwave's interior.
-			Inventory.ServerDrop(storageSlot, microwaveInteriorCenterRel);
-			storedCookable = null;
+
+			foreach (var slot in storage.GetItemSlots())
+			{
+				if (slot.IsOccupied == true)
+				{
+					Inventory.ServerDrop(slot, microwaveInteriorCenterRel);
+				}
+			}
+
 		}
 
 		private void StartMicrowave()
 		{
 			UpdateManager.Add(CallbackType.UPDATE, UpdateMe);
-			SoundManager.PlayNetworkedAtPos("MicrowaveStart", WorldPosition, sourceObj: gameObject);
+			SoundManager.PlayNetworkedAtPos(startSFX, WorldPosition, sourceObj: gameObject);
 			playAudioLoop = true;
 		}
 
@@ -198,14 +261,14 @@ namespace Objects.Kitchen
 			{
 				microwaveTimer += seconds;
 			}
-
-			SoundManager.PlayNetworkedAtPos(TIMER_BEEP, WorldPosition, sourceObj: gameObject, pitch: seconds < 0 ? 0.8f : 1);
+			AudioSourceParameters audioSourceParameters = new AudioSourceParameters(pitch: seconds < 0 ? 0.8f : 1);
+			SoundManager.PlayNetworkedAtPos(timerBeepSFX, WorldPosition, audioSourceParameters, sourceObj: gameObject);
 		}
 
 		private void MicrowaveTimerComplete()
 		{
 			HaltMicrowave();
-			SoundManager.PlayNetworkedAtPos("MicrowaveDing", WorldPosition, sourceObj: gameObject);
+			SoundManager.PlayNetworkedAtPos(doneDingSFX, WorldPosition, sourceObj: gameObject);
 
 			// Chance to dirty microwave. Could probably tie this tied into what is cooked instead or additionally.
 			if (UnityEngine.Random.Range(1, 101) < DIRTY_CHANCE_PER_FINISH)
@@ -221,10 +284,11 @@ namespace Objects.Kitchen
 
 		private void CheckCooked()
 		{
+			/* -- Obsolete, only affects one item.
 			if (storedCookable == null) return;
 
 			// True if the item's total cooking time exceeds the item's minimum cooking time.
-			if (storedCookable.AddCookingTime(Time.deltaTime))
+			if (storedCookable.AddCookingTime(Time.deltaTime*LaserTierTimeEffect()))
 			{
 				// Swap item for its cooked version, if applicable.
 
@@ -233,6 +297,32 @@ namespace Objects.Kitchen
 				Despawn.ServerSingle(storedCookable.gameObject);
 				GameObject cookedItem = Spawn.ServerPrefab(storedCookable.CookedProduct).GameObject;
 				Inventory.ServerAdd(cookedItem, storageSlot);
+			}
+			*/
+
+			foreach (var slot in storage.GetItemSlots())
+			{
+				if (slot.IsOccupied == true)
+				{
+
+					if (slot.ItemObject.TryGetComponent(out Cookable slotCooked))
+					{
+
+						// True if the item's total cooking time exceeds the item's minimum cooking time.
+						if (slotCooked.AddCookingTime(Time.deltaTime * LaserTierTimeEffect()) == true)
+						{
+							// Swap item for its cooked version, if applicable.
+							if (slotCooked.CookedProduct == null) return;
+
+							_ = Despawn.ServerSingle(slotCooked.gameObject);
+							GameObject cookedItem = Spawn.ServerPrefab(slotCooked.CookedProduct).GameObject;
+							Inventory.ServerAdd(cookedItem, slot);
+						}
+
+					}
+
+				}
+
 			}
 		}
 
@@ -254,7 +344,7 @@ namespace Objects.Kitchen
 			}
 			else
 			{
-				RunningAudio.Stop();
+				SoundManager.Stop(runLoopGUID);
 			}
 		}
 
@@ -264,7 +354,11 @@ namespace Objects.Kitchen
 			yield return WaitFor.Seconds(0.25f);
 
 			// Check to make sure the state hasn't changed in the meantime.
-			if (playAudioLoop) RunningAudio.Play();
+			if (playAudioLoop)
+			{
+				runLoopGUID = Guid.NewGuid().ToString();
+				SoundManager.PlayAtPositionAttached(RunningAudio, registerTile.WorldPosition, gameObject, runLoopGUID);
+			}
 		}
 
 		#region LegacyCode
@@ -285,46 +379,64 @@ namespace Objects.Kitchen
 		private void LegacyFinishCooking()
 		{
 			if (!HasContents) return;
-			var item = storageSlot.ItemObject;
 
-			// HACK: Currently DOES NOT check how many items are used per meal
-			// Blindly assumes each single item in a stack produces a meal
-
-			//If food item is stackable, set output amount to equal input amount.
-			int originalStackAmount = 1;
-			if (item.TryGetComponent(out Stackable stackable))
+			foreach (var slot in storage.GetItemSlots())
 			{
-				originalStackAmount = stackable.Amount;
-			}
+				if (slot.IsEmpty == true) continue;
 
-			GameObject itemToSpawn;
+				var item = slot.ItemObject;
 
-			// Check if the microwave could cook the food.
-			GameObject meal = GetMeal(item);
-			if (meal == null) return;
+				// HACK: Currently DOES NOT check how many items are used per meal
+				// Blindly assumes each single item in a stack produces a meal
 
-			itemToSpawn = CraftingManager.Meals.FindOutputMeal(meal.name);
-			GameObject spawned = Spawn.ServerPrefab(itemToSpawn, WorldPosition).GameObject;
-
-			if (spawned.TryGetComponent(out Stackable newItemStack))
-			{
-				int mealDeficit = originalStackAmount - newItemStack.InitialAmount;
-				while (mealDeficit > 0)
+				//If food item is stackable, set output amount to equal input amount.
+				int originalStackAmount = 1;
+				if (item.TryGetComponent(out Stackable stackable))
 				{
-					mealDeficit = newItemStack.ServerIncrease(mealDeficit);
+					originalStackAmount = stackable.Amount;
 				}
+
+				GameObject itemToSpawn;
+
+				// Check if the microwave could cook the food.
+				GameObject meal = GetMeal(item);
+				if (meal == null) return;
+
+				itemToSpawn = CraftingManager.Meals.FindOutputMeal(meal.name);
+				GameObject spawned = Spawn.ServerPrefab(itemToSpawn, WorldPosition).GameObject;
+
+				if (spawned.TryGetComponent(out Stackable newItemStack))
+				{
+					int mealDeficit = originalStackAmount - newItemStack.InitialAmount;
+					while (mealDeficit > 0)
+					{
+						mealDeficit = newItemStack.ServerIncrease(mealDeficit);
+					}
+				}
+
+				_ = Despawn.ServerSingle(item);
+				Inventory.ServerAdd(spawned, slot);
 			}
 
-			Despawn.ServerSingle(item);
-			Inventory.ServerAdd(spawned, storageSlot);
 		}
 
-		#endregion LegacyCode
+		#endregion
 
-		public void PowerNetworkUpdate(float Voltage)
+		#region IAPCPowerable
+
+		/// <summary>
+		/// Part of interface IAPCPowerable. Sets the microwave's state according to the given power state.
+		/// </summary>
+		/// <param name="state">The power state to set the microwave's state with.</param>
+		public void StateUpdate(PowerState state)
 		{
-			return;
+			EnsureInit(); // This method could be called before the component's Awake().
+			currentState.PowerStateUpdate(state);
 		}
+
+		public void PowerNetworkUpdate(float voltage) { }
+
+		#endregion
 
 		#region MicrowaveStates
 
@@ -336,7 +448,7 @@ namespace Objects.Kitchen
 			public abstract void ToggleActive();
 			public abstract void DoorInteraction(ItemSlot fromSlot);
 			public abstract void AddTime(int seconds);
-			public abstract void PowerStateUpdate(PowerStates state);
+			public abstract void PowerStateUpdate(PowerState state);
 		}
 
 		private class MicrowaveIdle : MicrowaveState
@@ -368,9 +480,9 @@ namespace Objects.Kitchen
 				microwave.AddTime(seconds);
 			}
 
-			public override void PowerStateUpdate(PowerStates state)
+			public override void PowerStateUpdate(PowerState state)
 			{
-				if (state == PowerStates.Off || state == PowerStates.LowVoltage)
+				if (state == PowerState.Off || state == PowerState.LowVoltage)
 				{
 					microwave.SetState(new MicrowaveUnpowered(microwave));
 				}
@@ -393,8 +505,29 @@ namespace Objects.Kitchen
 
 			public override void DoorInteraction(ItemSlot fromSlot)
 			{
+				SoundManager.PlayNetworkedAtPos(microwave.doorSFX.GetRandomClip(), microwave.WorldPosition, sourceObj: microwave.gameObject);
+
+				// Close if nothing's in hand.
+				if (fromSlot == null || fromSlot.Item == null)
+				{
+					microwave.SetState(new MicrowaveIdle(microwave));
+					return;
+				}
+
 				microwave.TransferToMicrowaveAndClose(fromSlot);
-				microwave.SetState(new MicrowaveIdle(microwave));
+
+				// If storage is full, close.
+				bool isFull = true;
+				foreach (var slot in microwave.storage.GetItemSlots())
+				{
+					if (slot.IsEmpty == true)
+					{
+						isFull = false;
+					}
+				}
+
+				if (isFull == true)
+					microwave.SetState(new MicrowaveIdle(microwave));
 			}
 
 			public override void AddTime(int seconds)
@@ -402,9 +535,9 @@ namespace Objects.Kitchen
 				microwave.AddTime(seconds);
 			}
 
-			public override void PowerStateUpdate(PowerStates state)
+			public override void PowerStateUpdate(PowerState state)
 			{
-				if (state == PowerStates.Off || state == PowerStates.LowVoltage)
+				if (state == PowerState.Off || state == PowerState.LowVoltage)
 				{
 					microwave.SetState(new MicrowaveUnpoweredOpen(microwave));
 				}
@@ -438,9 +571,9 @@ namespace Objects.Kitchen
 				microwave.AddTime(seconds);
 			}
 
-			public override void PowerStateUpdate(PowerStates state)
+			public override void PowerStateUpdate(PowerState state)
 			{
-				if (state == PowerStates.Off || state == PowerStates.LowVoltage)
+				if (state == PowerState.Off || state == PowerState.LowVoltage)
 				{
 					microwave.SetState(new MicrowaveUnpowered(microwave));
 				}
@@ -469,9 +602,9 @@ namespace Objects.Kitchen
 
 			public override void AddTime(int seconds) { }
 
-			public override void PowerStateUpdate(PowerStates state)
+			public override void PowerStateUpdate(PowerState state)
 			{
-				if (state == PowerStates.On || state == PowerStates.OverVoltage)
+				if (state == PowerState.On || state == PowerState.OverVoltage)
 				{
 					microwave.SetState(new MicrowaveIdle(microwave));
 				}
@@ -494,15 +627,34 @@ namespace Objects.Kitchen
 
 			public override void DoorInteraction(ItemSlot fromSlot)
 			{
+				// Close if nothing's in hand.
+				if (fromSlot.Item == null)
+				{
+					microwave.SetState(new MicrowaveUnpowered(microwave));
+					return;
+				}
+
 				microwave.TransferToMicrowaveAndClose(fromSlot);
-				microwave.SetState(new MicrowaveUnpowered(microwave));
+
+				// If storage is full, close.
+				bool isFull = true;
+				foreach (var slot in microwave.storage.GetItemSlots())
+				{
+					if (slot.IsEmpty == true)
+					{
+						isFull = false;
+					}
+				}
+
+				if (isFull == true)
+					microwave.SetState(new MicrowaveUnpowered(microwave));
 			}
 
 			public override void AddTime(int seconds) { }
 
-			public override void PowerStateUpdate(PowerStates state)
+			public override void PowerStateUpdate(PowerState state)
 			{
-				if (state == PowerStates.On || state == PowerStates.OverVoltage)
+				if (state == PowerState.On || state == PowerState.OverVoltage)
 				{
 					microwave.SetState(new MicrowaveOpen(microwave));
 				}
@@ -532,7 +684,7 @@ namespace Objects.Kitchen
 
 			public override void AddTime(int seconds) { }
 
-			public override void PowerStateUpdate(PowerStates state) { }
+			public override void PowerStateUpdate(PowerState state) { }
 		}
 
 		private class MicrowaveBrokenOpen : MicrowaveState
@@ -551,15 +703,34 @@ namespace Objects.Kitchen
 
 			public override void DoorInteraction(ItemSlot fromSlot)
 			{
+				// Close if nothing's in hand.
+				if (fromSlot.Item == null)
+				{
+					microwave.SetState(new MicrowaveBroken(microwave));
+					return;
+				}
+
 				microwave.TransferToMicrowaveAndClose(fromSlot);
-				microwave.SetState(new MicrowaveBroken(microwave));
+
+				// If storage is full, close.
+				bool isFull = true;
+				foreach (var slot in microwave.storage.GetItemSlots())
+				{
+					if (slot.IsEmpty == true)
+					{
+						isFull = false;
+					}
+				}
+
+				if (isFull == true)
+					microwave.SetState(new MicrowaveBroken(microwave));
 			}
 
 			public override void AddTime(int seconds) { }
 
-			public override void PowerStateUpdate(PowerStates state) { }
+			public override void PowerStateUpdate(PowerState state) { }
 		}
 
-		#endregion MicrowaveStates
+		#endregion
 	}
 }

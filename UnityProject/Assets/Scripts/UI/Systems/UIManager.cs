@@ -4,6 +4,7 @@ using AdminTools;
 using Audio.Managers;
 using Initialisation;
 using Mirror;
+using UI.Core;
 using UI.Jobs;
 using UI.UI_Bottom;
 using UnityEngine;
@@ -11,24 +12,26 @@ using UnityEngine.SceneManagement;
 using UnityEngine.Serialization;
 using UnityEngine.UI;
 using UI.Core.Windows;
+using UI.Windows;
+using UI;
 
 public class UIManager : MonoBehaviour, IInitialise
 {
 	private static UIManager uiManager;
 	public GUI_VariableViewer VariableViewer;
-	public BookshelfViewer BookshelfViewer;
+	public UI_BooksInBookshelf UI_BooksInBookshelf;
+	public LibraryUI LibraryUI;
 	public GUI_TextInputDialog TextInputDialog;
 	public ControlAction actionControl;
 	[FormerlySerializedAs("dragAndDrop")] public UIDragAndDrop uiDragAndDrop;
 	public ControlDisplays displayControl;
 	public ControlClothing controlClothing;
 	public PanelHudBottomController panelHudBottomController;
-	public Hands hands;
 	public ControlInternals internalControls;
 	public PlayerExaminationWindowUI playerExaminationWindow;
 	public ControlIntent intentControl;
 	public PlayerHealthUI playerHealthUI;
-	public PlayerListUI playerListUIControl;
+	public StatsTab statsTab;
 	public Text toolTip;
 	public Text pingDisplay;
 	[SerializeField]
@@ -36,6 +39,7 @@ public class UIManager : MonoBehaviour, IInitialise
 	public Text versionDisplay;
 	public GUI_Info infoWindow;
 	public TeleportWindow teleportWindow;
+	[SerializeField] private GhostRoleWindow ghostRoleWindow = default;
 	public UI_StorageHandler storageHandler;
 	public BuildMenu buildMenu;
 	public ZoneSelector zoneSelector;
@@ -44,13 +48,22 @@ public class UIManager : MonoBehaviour, IInitialise
 	public GamePad gamePad;
 	public AnimationCurve strandedZoomOutCurve;
 	public AdminChatButtons adminChatButtons;
+	public AdminChatButtons mentorChatButtons;
 	public AdminChatWindows adminChatWindows;
 	public ProfileScrollView profileScrollView;
 	public PlayerAlerts playerAlerts;
-	public GUIAntagBanner antagBanner;
+	[FormerlySerializedAs("antagBanner")] public GUIAntagBanner spawnBanner;
 	private bool preventChatInput;
 	[SerializeField] [Range(0.1f,10f)] private float PhoneZoomFactor = 1.6f;
 	public LobbyUIPlayerListController lobbyUIPlayerListController = null;
+
+	public SurgeryDialogue SurgeryDialogue;
+
+	public CrayonUI CrayonUI;
+
+	public UI_SlotManager UI_SlotManager;
+	
+	public GeneralInputField GeneralInputField;
 
 	public static bool PreventChatInput
 	{
@@ -132,7 +145,7 @@ public class UIManager : MonoBehaviour, IInitialise
 			float screenHeight = Screen.height / Screen.dpi;
 			float diagonalInches = Mathf.Sqrt (Mathf.Pow (screenWidth, 2) + Mathf.Pow (screenHeight, 2));
 
-			Debug.Log ("Getting device inches: " + diagonalInches);
+			Logger.Log("Getting mobile device screen size in inches: " + diagonalInches, Category.UI);
 
 			return diagonalInches;
 		}
@@ -140,10 +153,8 @@ public class UIManager : MonoBehaviour, IInitialise
 
 	//		public static ControlChat Chat => Instance.chatControl; //Use ChatRelay.Instance.AddToChatLog instead!
 	public static PlayerHealthUI PlayerHealthUI => Instance.playerHealthUI;
-	
-	public static PlayerExaminationWindowUI PlayerExaminationWindow => Instance.playerExaminationWindow;
 
-	public static Hands Hands => Instance.hands;
+	public static PlayerExaminationWindowUI PlayerExaminationWindow => Instance.playerExaminationWindow;
 
 	public static ControlIntent Intent => Instance.intentControl;
 
@@ -156,7 +167,7 @@ public class UIManager : MonoBehaviour, IInitialise
 	public static ControlDisplays Display => Instance.displayControl;
 	public static ControlClothing ControlClothing => Instance.controlClothing;
 
-	public static PlayerListUI PlayerListUI => Instance.playerListUIControl;
+	public static StatsTab StatsTab => Instance.statsTab;
 
 	public static UI_StorageHandler StorageHandler
 	{
@@ -177,6 +188,7 @@ public class UIManager : MonoBehaviour, IInitialise
 	public static GUI_Info InfoWindow => Instance.infoWindow;
 
 	public static TeleportWindow TeleportWindow => Instance.teleportWindow;
+	public static GhostRoleWindow GhostRoleWindow => Instance.ghostRoleWindow;
 
 	private float pingUpdate;
 
@@ -230,7 +242,7 @@ public class UIManager : MonoBehaviour, IInitialise
 	void IInitialise.Initialise()
 	{
 		DetermineInitialTargetFrameRate();
-		Logger.Log("Touchscreen support = " + CommonInput.IsTouchscreen, Category.UI);
+		Logger.Log("Touchscreen support = " + CommonInput.IsTouchscreen, Category.Sprites);
 		InitMobile();
 
 		if (!PlayerPrefs.HasKey(PlayerPrefKeys.TTSToggleKey))
@@ -245,6 +257,7 @@ public class UIManager : MonoBehaviour, IInitialise
 		}
 
 		adminChatButtons.transform.parent.gameObject.SetActive(false);
+		mentorChatButtons.transform.parent.gameObject.SetActive(false);
 		SetVersionDisplay = $"Work In Progress {GameData.BuildNumber}";
 	}
 
@@ -285,6 +298,7 @@ public class UIManager : MonoBehaviour, IInitialise
 	void OnSceneChange(Scene oldScene, Scene newScene)
 	{
 		adminChatButtons.ClearAllNotifications();
+		mentorChatButtons.ClearAllNotifications();
 		adminChatWindows.ResetAll();
 		playerAlerts.ClearLogs();
 	}
@@ -351,7 +365,7 @@ public class UIManager : MonoBehaviour, IInitialise
 				);
 				break;
 			default:
-				Logger.LogWarning($"There is no keybind text for KeyAction {keyAction}");
+				Logger.LogWarning($"There is no keybind text for KeyAction {keyAction}", Category.Keybindings);
 				break;
 		}
 	}
@@ -386,7 +400,6 @@ public class UIManager : MonoBehaviour, IInitialise
 		}
 
 		StorageHandler.CloseStorageUI();
-		Hands.SetHand(true);
 		Camera2DFollow.followControl.ZeroStars();
 		IsOxygen = false;
 		GamePad.gameObject.SetActive(UseGamePad);
@@ -502,12 +515,15 @@ public class UIManager : MonoBehaviour, IInitialise
 	/// <summary>
 	/// Links the UI slots to the spawned local player. Should only be called after local player has been spawned / set
 	/// </summary>
-	public static void LinkUISlots()
+	public static void LinkUISlots(ItemStorageLinkOrigin itemStorageLinkOrigin)
 	{
-		//link the UI slots to this player
+		// link the UI slots to this player
 		foreach (var uiSlot in Instance.GetComponentsInChildren<UI_ItemSlot>(true))
 		{
-			uiSlot.LinkToLocalPlayer();
+			if (uiSlot.ItemStorageLinkOrigin == itemStorageLinkOrigin)
+			{
+				uiSlot.LinkToLocalPlayer();
+			}
 		}
 	}
 

@@ -1,17 +1,21 @@
 using System;
 using System.Collections;
 using System.Collections.Generic;
+using AddressableReferences;
 using Electricity.Inheritance;
 using Systems.Electricity;
 using Mirror;
 using UnityEngine;
 using UnityEngine.Serialization;
+using Systems.Electricity.NodeModules;
+using Objects.Lighting;
+using UnityEngine.Events;
 
 namespace Objects.Engineering
 {
 	[RequireComponent(typeof(ElectricalNodeControl))]
 	[RequireComponent(typeof(ResistanceSourceModule))]
-	public class APC : SubscriptionController, ICheckedInteractable<HandApply>, INodeControl, IServerDespawn, ISetMultitoolMaster
+	public class APC : SubscriptionController, INodeControl, IServerDespawn, ISetMultitoolMaster
 	{
 		// -----------------------------------------------------
 		//					ELECTRICAL THINGS
@@ -33,20 +37,33 @@ namespace Objects.Engineering
 		[SerializeField] [Tooltip("Currently unused! If true, this APC will power environment.")]
 		private bool powerEnvironment = true;
 
-		private int cashOfConnectedDevices;
+		private int cacheOfConnectedDevices;
 		private bool batteryCharging;
 
 		public float Voltage => voltageSync;
 
-		private float current;
-		public float Current => current;
+		public float Current { get; private set; }
 
 		private ElectricalNodeControl electricalNodeControl;
 		private ResistanceSourceModule resistanceSourceModule;
 
 
-		[SerializeField][FormerlySerializedAs("NetTabType")]
-		private NetTabType netTabType;
+		[SerializeField, FormerlySerializedAs("NetTabType")]
+		private NetTabType netTabType = NetTabType.APC;
+
+		[Tooltip("Sound used when the APC loses all power.")]
+		[SerializeField] private AddressableAudioSource NoPowerSound = null;
+
+		[NonSerialized]
+		//Called every power network update
+		public UnityEvent<APC> OnPowerNetworkUpdate = new UnityEvent<APC>();
+
+		/// <summary>
+		///Used to store all the departmentBatteries that have ever connected to this APC, there might be null values
+		///Dont use this to access currently connected batteries.
+		/// </summary>
+		public List<DepartmentBattery> DepartmentBatteries => departmentBatteries;
+		private List<DepartmentBattery> departmentBatteries = new List<DepartmentBattery>();
 
 		/// <summary>
 		/// Function for setting the voltage via the property. Used for the voltage SyncVar hook.
@@ -56,6 +73,8 @@ namespace Objects.Engineering
 			voltageSync = newVoltage;
 			UpdateDisplay();
 		}
+
+		#region Lifecycyle
 
 		private void Awake()
 		{
@@ -71,26 +90,16 @@ namespace Objects.Engineering
 		private void CheckListOfDevicesForNulls()
 		{
 			if (connectedDevices.Count == 0) return;
-			for (int i = connectedDevices.Count -1; i >= 0; i--)
+			for (int i = connectedDevices.Count - 1; i >= 0; i--)
 			{
 				if (connectedDevices[i] != null)
 				{
 					continue;
 				}
 
-				Debug.Log($"{name} has a null value in {i}.");
+				Logger.Log($"{name} has a null value in {i}.", Category.Electrical);
 				connectedDevices.RemoveAt(i);
 			}
-		}
-
-		public override void OnStartServer()
-		{
-			SyncVoltage(voltageSync, voltageSync);
-		}
-
-		public override void OnStartClient()
-		{
-			SyncVoltage(voltageSync, voltageSync);
 		}
 
 		private void OnDisable()
@@ -101,27 +110,26 @@ namespace Objects.Engineering
 			ElectricalManager.Instance.electricalSync.PoweredDevices.Remove(electricalNodeControl);
 		}
 
-		public bool WillInteract(HandApply interaction, NetworkSide side)
-		{
-			if (!DefaultWillInteract.Default(interaction, side)) return false;
-			if (interaction.TargetObject != gameObject) return false;
-			if (interaction.HandObject != null) return false;
-			return true;
-		}
+		#endregion
 
 		public void PowerNetworkUpdate()
 		{
-			if (cashOfConnectedDevices != electricalNodeControl.Node.InData.Data.ResistanceToConnectedDevices.Count)
+			if (cacheOfConnectedDevices != electricalNodeControl.Node.InData.Data.ResistanceToConnectedDevices.Count)
 			{
-				cashOfConnectedDevices = electricalNodeControl.Node.InData.Data.ResistanceToConnectedDevices.Count;
+				cacheOfConnectedDevices = electricalNodeControl.Node.InData.Data.ResistanceToConnectedDevices.Count;
 				connectedDepartmentBatteries.Clear();
 				foreach (var device in electricalNodeControl.Node.InData.Data.ResistanceToConnectedDevices)
 				{
 					if (device.Key.Data.InData.Categorytype != PowerTypeCategory.DepartmentBattery) continue;
 
-					if (!connectedDepartmentBatteries.Contains(device.Key.Data.GetComponent<DepartmentBattery>()))
+					if (connectedDepartmentBatteries.Contains(device.Key.Data.GetComponent<DepartmentBattery>()) == false)
 					{
 						connectedDepartmentBatteries.Add(device.Key.Data.GetComponent<DepartmentBattery>());
+
+						if (departmentBatteries.Contains(device.Key.Data.GetComponent<DepartmentBattery>()) == false)
+						{
+							departmentBatteries.Add(device.Key.Data.GetComponent<DepartmentBattery>());
+						}
 					}
 				}
 			}
@@ -135,9 +143,10 @@ namespace Objects.Engineering
 			}
 			ElectricityFunctions.WorkOutActualNumbers(electricalNodeControl.Node.InData);
 			SyncVoltage(voltageSync, electricalNodeControl.Node.InData.Data.ActualVoltage);
-			current = electricalNodeControl.Node.InData.Data.CurrentInWire;
+			Current = electricalNodeControl.Node.InData.Data.CurrentInWire;
 			HandleDevices();
-			UpdateDisplay();
+
+			OnPowerNetworkUpdate.Invoke(this);
 		}
 
 		private void UpdateDisplay()
@@ -150,18 +159,55 @@ namespace Objects.Engineering
 			{
 				State = APCState.Full;
 			}
+			else if (batteryCharging)
+			{
+				State = APCState.Charging;
+			}
 			else if (Voltage > 0f)
 			{
 				State = APCState.Critical;
 			}
 			else
 			{
-				State = APCState.Critical;
+				State = APCState.Dead;
 			}
-			if (batteryCharging)
+
+		}
+
+		private float CalculateMaxCapacity()
+		{
+			float newCapacity = 0;
+			foreach (DepartmentBattery battery in ConnectedDepartmentBatteries)
 			{
-				State = APCState.Charging;
+				newCapacity += battery.BatterySupplyingModule.CapacityMax;
 			}
+
+			return newCapacity;
+		}
+
+		//Percentage in decimal, 0-1
+		public float CalculateChargePercentage()
+		{
+			var maxCapacity = CalculateMaxCapacity();
+
+			if (maxCapacity.Approx(0))
+			{
+				return 0;
+			}
+
+			float newCapacity = 0;
+			foreach (DepartmentBattery battery in ConnectedDepartmentBatteries)
+			{
+				newCapacity += battery.BatterySupplyingModule.CurrentCapacity;
+			}
+
+			return (newCapacity / maxCapacity);
+		}
+
+		// Percentage as string, 0% to 100%
+		public string CalculateChargePercentageString()
+		{
+			return CalculateChargePercentage().ToString("P0");
 		}
 
 		/// <summary>
@@ -183,12 +229,6 @@ namespace Objects.Engineering
 			}
 
 			resistanceSourceModule.Resistance = (1 / CalculatingResistance);
-		}
-
-
-		public void ServerPerformInteraction(HandApply interaction)
-		{
-			TabUpdateMessage.Send(interaction.Performer, gameObject, netTabType, TabAction.Open);
 		}
 
 		// -----------------------------------------------------
@@ -243,13 +283,13 @@ namespace Objects.Engineering
 				case APCState.Critical:
 					loadedScreenSprites = criticalSprites;
 					EmergencyState = true;
-					TriggerSoundOff();
 					if (!RefreshDisplay) StartRefresh();
 					break;
 				case APCState.Dead:
 					screenDisplay.sprite = null;
 					EmergencyState = true;
 					StopRefresh();
+					_ = SoundManager.PlayAtPosition(NoPowerSound, gameObject.WorldPosServer());
 					break;
 			}
 		}
@@ -291,15 +331,18 @@ namespace Objects.Engineering
 			RefreshDisplay = true;
 			StartCoroutine(Refresh());
 		}
+
 		public void RefreshOnce()
 		{
 			RefreshDisplay = false;
 			StartCoroutine(Refresh());
 		}
+
 		private void StopRefresh()
 		{
 			RefreshDisplay = false;
 		}
+
 		private IEnumerator Refresh()
 		{
 			RefreshDisplayScreen();
@@ -392,7 +435,8 @@ namespace Objects.Engineering
 
 		#endregion
 
-		//######################################## Multitool interaction ##################################
+		#region Multitool Interaction
+
 		[SerializeField]
 		private MultitoolConnectionType conType = MultitoolConnectionType.APC;
 		public MultitoolConnectionType ConType  => conType;
@@ -415,6 +459,7 @@ namespace Objects.Engineering
 			connectedDevices.Remove(apcPoweredDevice);
 			apcPoweredDevice.PowerNetworkUpdate(0.1f);
 		}
+
 		public void AddDevice(APCPoweredDevice apcPoweredDevice)
 		{
 			if (!connectedDevices.Contains(apcPoweredDevice))
@@ -448,25 +493,17 @@ namespace Objects.Engineering
 			else
 			{
 				connectedDevices.Add(poweredDevice);
+
+				if (poweredDevice.RelatedAPC != null)
+				{
+					//Already connected to something so remove it
+					poweredDevice.RelatedAPC.RemoveDevice(poweredDevice);
+				}
+
 				poweredDevice.RelatedAPC = this;
 			}
 		}
 
-		public void TriggerSoundOff()
-		{
-			if(!CustomNetworkManager.IsServer) return;
-
-			StartCoroutine(TriggerSoundOffRoutine());
-		}
-
-		private IEnumerator TriggerSoundOffRoutine()
-		{
-			yield return new WaitForSeconds(1f);
-
-			if (State != APCState.Critical) yield break;
-
-			SoundManager.PlayNetworkedAtPos("APCPowerOff", gameObject.WorldPosServer());
-		}
+		#endregion
 	}
 }
-

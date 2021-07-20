@@ -1,10 +1,11 @@
 ﻿using System.Collections;
 using System.Collections.Generic;
+using Core.Input_System.InteractionV2.Interactions;
 using UnityEngine;
 
 namespace Pipes
 {
-	public class MonoPipe : MonoBehaviour, IServerDespawn, ICheckedInteractable<HandApply>
+	public class MonoPipe : MonoBehaviour, IServerLifecycle, ICheckedInteractable<HandApply>, ICheckedInteractable<AiActivate>
 	{
 		public SpriteHandler spritehandler;
 		public GameObject SpawnOnDeconstruct;
@@ -15,52 +16,56 @@ namespace Pipes
 
 		public Color Colour = Color.white;
 
-		public virtual void Start()
+		protected Directional directional;
+
+		#region Lifecycle
+
+		public virtual void Awake()
 		{
-			EnsureInit();
+			registerTile = GetComponent<RegisterTile>();
+			directional = GetComponent<Directional>();
 		}
 
-		public void SetColour(Color newColour)
+		public virtual void OnSpawnServer(SpawnInfo info)
 		{
-			Colour = newColour;
-			spritehandler.SetColor(Colour);
+			SetUpPipes();
 		}
 
-		private void EnsureInit()
+		protected void SetUpPipes()
 		{
-			if (registerTile == null)
+			if (pipeData.PipeAction == null)
 			{
-				registerTile = GetComponent<RegisterTile>();
+				pipeData.PipeAction = new MonoActions();
 			}
-
 			registerTile.SetPipeData(pipeData);
 			pipeData.MonoPipe = this;
-			int Offset = PipeFunctions.GetOffsetAngle(this.transform.localRotation.eulerAngles.z);
+			int Offset = PipeFunctions.GetOffsetAngle(transform.localRotation.eulerAngles.z);
 			pipeData.Connections.Rotate(Offset);
 			pipeData.OnEnable();
-			spritehandler?.SetColor(Colour);
+			spritehandler.OrNull()?.gameObject.OrNull()?.SetActive( true);
+			spritehandler.OrNull()?.SetColor(Colour);
 		}
 
-		void OnEnable()
-		{
-
-		}
-
-		public virtual void TickUpdate()
-		{
-		}
 		/// <summary>
-		/// is the function to denote that it will be pooled or destroyed immediately after this function is finished, Used for cleaning up anything that needs to be cleaned up before this happens
+		/// Is the function to denote that it will be pooled or destroyed immediately after this function is finished.
+		/// Used for cleaning up anything that needs to be cleaned up before this happens.
 		/// </summary>
 		public virtual void OnDespawnServer(DespawnInfo info)
 		{
 			pipeData.OnDisable();
 		}
 
+		#endregion
+
+		public virtual void TickUpdate() { }
+
+		#region Interaction
+
 		public virtual bool WillInteract(HandApply interaction, NetworkSide side)
 		{
-			if (!DefaultWillInteract.Default(interaction, side)) return false;
+			if (DefaultWillInteract.Default(interaction, side) == false) return false;
 			if (interaction.TargetObject != gameObject) return false;
+
 			return true;
 		}
 
@@ -71,34 +76,57 @@ namespace Pipes
 				if (Validations.HasItemTrait(interaction.UsedObject, CommonTraits.Instance.Wrench))
 				{
 					ToolUtils.ServerPlayToolSound(interaction);
-					var Item = Spawn.ServerPrefab(SpawnOnDeconstruct, registerTile.WorldPositionServer, localRotation : this.transform.localRotation);
+					var Item = Spawn.ServerPrefab(SpawnOnDeconstruct, registerTile.WorldPositionServer, localRotation: this.transform.localRotation);
 					Item.GameObject.GetComponent<PipeItem>().SetColour(Colour);
 					OnDisassembly(interaction);
 					pipeData.OnDisable();
-					Despawn.ServerSingle(this.gameObject);
+					_ = Despawn.ServerSingle(gameObject);
 					return;
 				}
 			}
 
-			Interaction(interaction);
+			HandApplyInteraction(interaction);
 		}
 
-		public virtual void Interaction(HandApply interaction)
-		{
+		public virtual void HandApplyInteraction(HandApply interaction) { }
 
+		public virtual void OnDisassembly(HandApply interaction) { }
+
+		//Ai interaction
+		public bool WillInteract(AiActivate interaction, NetworkSide side)
+		{
+			//Only alt and normal are used so dont need to check others, change if needed in the future
+			if (interaction.ClickType != AiActivate.ClickTypes.NormalClick &&
+			    interaction.ClickType != AiActivate.ClickTypes.AltClick) return false;
+
+			if (DefaultWillInteract.AiActivate(interaction, side) == false) return false;
+
+			return true;
 		}
 
-		public virtual void OnDisassembly(HandApply interaction)
+		public void ServerPerformInteraction(AiActivate interaction)
 		{
+			AiInteraction(interaction);
+		}
 
+		public virtual void AiInteraction(AiActivate interaction) { }
+
+		#endregion
+
+		public void SetColour(Color newColour)
+		{
+			Colour = newColour;
 		}
 
 		#region Editor
 
-		void OnDrawGizmos()
+		private void OnDrawGizmos()
 		{
+			var density = pipeData.mixAndVolume.Density();
+			if(density.x.Approx(0) && density.y.Approx(0)) return;
+
 			Gizmos.color = Color.white;
-			DebugGizmoUtils.DrawText(pipeData.mixAndVolume.Density().ToString(), transform.position, 10);
+			DebugGizmoUtils.DrawText(density.ToString(), transform.position, 10);
 			Gizmos.color = Color.magenta;
 			if (pipeData.Connections.Directions[0].Bool)
 			{

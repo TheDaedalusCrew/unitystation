@@ -7,7 +7,7 @@ using Initialisation;
 using UnityEngine;
 using Mirror;
 
-public class SubsystemManager : NetworkBehaviour
+public class SubsystemManager : MonoBehaviour
 {
 	private List<SubsystemBehaviour> systems = new List<SubsystemBehaviour>();
 	private bool initialized;
@@ -28,7 +28,8 @@ public class SubsystemManager : NetworkBehaviour
 		{
 			yield return WaitFor.EndOfFrame;
 		}
-
+		
+		yield return null; //So objects/doors can register themselves before atmospherics system scans for rooms
 		for (int i = 0; i < systems.Count; i++)
 		{
 			systems[i].Initialize();

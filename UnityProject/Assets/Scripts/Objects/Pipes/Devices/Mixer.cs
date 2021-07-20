@@ -1,5 +1,7 @@
 ﻿using System.Collections;
 using System.Collections.Generic;
+using Core.Input_System.InteractionV2.Interactions;
+using Messages.Server;
 using UnityEngine;
 
 namespace Pipes
@@ -10,7 +12,7 @@ namespace Pipes
 
 		private MixAndVolume IntermediateMixAndVolume = new MixAndVolume();
 
-		public int MaxPressure = 10000;
+		public int MaxPressure = 9999;
 		private float TransferMoles = 500f;
 
 		public float ToTakeFromInputOne = 0.5f;
@@ -19,11 +21,8 @@ namespace Pipes
 		public bool IsOn = false;
 
 
-		public override void Start()
+		public override void OnSpawnServer(SpawnInfo info)
 		{
-			pipeData.PipeAction = new MonoActions();
-			base.Start();
-
 			if (IsOn)
 			{
 				spriteHandlerOverlay.PushTexture();
@@ -32,6 +31,7 @@ namespace Pipes
 			{
 				spriteHandlerOverlay.PushClear();
 			}
+			base.OnSpawnServer(info);
 		}
 
 		public void TogglePower()
@@ -47,7 +47,13 @@ namespace Pipes
 			}
 		}
 
-		public override void Interaction(HandApply interaction)
+		public override void HandApplyInteraction(HandApply interaction)
+		{
+			TabUpdateMessage.Send(interaction.Performer, gameObject, NetTabType.Mixer, TabAction.Open);
+		}
+
+		//Ai interaction
+		public override void AiInteraction(AiActivate interaction)
 		{
 			TabUpdateMessage.Send(interaction.Performer, gameObject, NetTabType.Mixer, TabAction.Open);
 		}

@@ -2,11 +2,16 @@
 using System.Collections;
 using UnityEngine;
 using Mirror;
+using AddressableReferences;
+using Messages.Server.SoundMessages;
+
 
 namespace Alien
 {
 	public class AlienEggCycle : MonoBehaviour, IInteractable<HandApply>, IServerSpawn, IServerDespawn
 	{
+		[SerializeField] private AddressableAudioSource squishSFX = null;
+
 		private const float OPENING_ANIM_TIME = 1.6f;
 		private const int SMALL_SPRITE = 0;
 		private const int BIG_SPRITE = 1;
@@ -52,7 +57,7 @@ namespace Alien
 			incubationTime = UnityEngine.Random.Range(60f, incubationTime);
 			UpdatePhase(initialState);
 			UpdateExamineMessage();
-			registerObject.Passable = false;
+			registerObject.SetPassable(false, false);
 		}
 
 
@@ -80,7 +85,7 @@ namespace Alien
 					break;
 				case EggState.Burst:
 					spriteHandler.ChangeSprite(HATCHED_SPRITE);
-					registerObject.Passable = true;
+					registerObject.SetPassable(false, true);
 					break;
 				case EggState.Squished:
 					spriteHandler.ChangeSprite(SQUISHED_SPRITE);
@@ -162,11 +167,9 @@ namespace Alien
 		{
 			StopAllCoroutines();
 
-			SoundManager.PlayNetworkedAtPos(
-				"squish",
-				gameObject.RegisterTile().WorldPositionServer,
-				1f,
-				global: false);
+			AudioSourceParameters audioSourceParameters = new AudioSourceParameters(pitch: 1f);
+			SoundManager.PlayNetworkedAtPos(squishSFX, gameObject.RegisterTile().WorldPositionServer,
+				audioSourceParameters, global: false);
 
 			Chat.AddActionMsgToChat(
 				interaction.Performer.gameObject,
@@ -174,7 +177,7 @@ namespace Alien
 				$"{interaction.Performer.ExpensiveName()} squishes the alien egg!");
 
 			UpdatePhase(EggState.Squished);
-			registerObject.Passable = true;
+			registerObject.SetPassable(false, true);
 		}
 
 

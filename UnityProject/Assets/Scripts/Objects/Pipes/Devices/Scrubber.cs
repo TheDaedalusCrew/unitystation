@@ -1,10 +1,11 @@
 using System.Collections;
 using System.Collections.Generic;
+using Systems.Atmospherics;
 using UnityEngine;
 
 namespace Pipes
 {
-	public class Scrubber : MonoPipe
+	public class Scrubber : MonoPipe, IServerSpawn
 	{
 		public bool SelfSufficient = false;
 		// minimum pressure needs to be a little lower because of floating point inaccuracies
@@ -17,28 +18,20 @@ namespace Pipes
 		private MetaDataNode metaNode;
 		private MetaDataLayer metaDataLayer;
 
-
-		public override void Start()
+		private GasMix selfSufficientGas;
+		public override void OnSpawnServer(SpawnInfo info)
 		{
-			pipeData.PipeAction = new MonoActions();
-			registerTile = this.GetComponent<RegisterTile>();
-
-			base.Start();
+			metaDataLayer = MatrixManager.AtPoint(registerTile.WorldPositionServer, true).MetaDataLayer;
+			metaNode = metaDataLayer.Get(registerTile.LocalPositionServer, false);
+			if (SelfSufficient)
+			{
+				selfSufficientGas = GasMix.NewGasMix(GasMixes.BaseAirMix);
+			}
+			base.OnSpawnServer(info);
 		}
 
 		public override void TickUpdate()
 		{
-			if (metaDataLayer == null)
-			{
-				metaDataLayer = MatrixManager.AtPoint(registerTile.WorldPositionServer, true).MetaDataLayer;
-			}
-
-			if (metaNode == null)
-			{
-				metaNode = metaDataLayer.Get(registerTile.LocalPositionServer, false);
-			}
-
-
 			base.TickUpdate();
 			pipeData.mixAndVolume.EqualiseWithOutputs(pipeData.Outputs);
 			CheckAtmos();
@@ -48,8 +41,9 @@ namespace Pipes
 		{
 			if (SelfSufficient == false)
 			{
-				var PressureDensity = pipeData.mixAndVolume.Density();
-				if (PressureDensity.y > MaxInternalPressure || metaNode.GasMix.Pressure < MMinimumPressure )
+				var pressureDensity = pipeData.mixAndVolume.Density();
+
+				if (pressureDensity.y > MaxInternalPressure || metaNode.GasMix.Pressure < MMinimumPressure )
 				{
 					return;
 				}
@@ -62,32 +56,30 @@ namespace Pipes
 				}
 			}
 
-			float Available = 0;
-			if (metaNode.GasMix.Pressure != 0)
+			if (metaNode.GasMix.Pressure == 0)
+				return;
+
+			float available = MMinimumPressure / metaNode.GasMix.Pressure * metaNode.GasMix.Moles;
+
+			if (available < 0)
+				return;
+
+			if (MaxTransferMoles < available)
 			{
-				Available =	((MMinimumPressure / metaNode.GasMix.Pressure) * metaNode.GasMix.Moles);
+				available = MaxTransferMoles;
+			}
+
+			var gasOnNode = metaNode.GasMix;
+
+			if (SelfSufficient)
+			{
+				GasMix.TransferGas(selfSufficientGas, gasOnNode, available);
+				selfSufficientGas.Copy(GasMixes.BaseAirMix);
 			}
 			else
 			{
-				return;
-			}
-
-			if (Available < 0)
-			{
-				return;
-			}
-
-			if (MaxTransferMoles < Available)
-			{
-				Available = MaxTransferMoles;
-			}
-
-			var Gasonnnode = metaNode.GasMix;
-			var TransferringGas = Gasonnnode.RemoveMoles(Available);
-			metaNode.GasMix = Gasonnnode;
-			if (SelfSufficient == false)
-			{
-				pipeData.mixAndVolume.Add(TransferringGas);
+				var pipeMix = pipeData.mixAndVolume.GetGasMix();
+				GasMix.TransferGas(pipeMix, gasOnNode, available);
 			}
 
 			metaDataLayer.UpdateSystemsAt(registerTile.LocalPositionServer, SystemType.AtmosSystem);

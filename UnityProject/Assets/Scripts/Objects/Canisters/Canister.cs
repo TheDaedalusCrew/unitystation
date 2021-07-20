@@ -174,7 +174,7 @@ namespace Objects.Atmospherics
 		{
 			if (newState)
 			{
-				registerObject.Passable = true;
+				registerObject.SetPassable(false, true);
 				// After the canister bursts, we switch appropriate scripts.
 				GetComponent<BurstCanister>().enabled = true;
 				networkTab.enabled = false;
@@ -230,7 +230,7 @@ namespace Objects.Atmospherics
 			EjectInsertedContainer();
 
 			var playerScript = networkTab.LastInteractedPlayer().GetComponent<PlayerScript>();
-			var bestHand = playerScript.ItemStorage.GetBestHand();
+			var bestHand = playerScript.DynamicItemStorage.GetBestHand();
 			if (bestHand != null)
 			{
 				Inventory.ServerAdd(gasContainer, bestHand);
@@ -340,7 +340,8 @@ namespace Objects.Atmospherics
 				Logger.LogError(
 						$"{interaction.Performer} tried inserting {interaction.UsedObject} into {gameObject}, " +
 						$"but the tank didn't have a {nameof(GasContainer)} component associated with it. " +
-						$"Something terrible has happened, or an item that should not has the CanisterFillable ItemTrait."
+						$"Something terrible has happened, or an item that should not has the CanisterFillable ItemTrait.",
+						Category.Atmos
 				);
 			}
 		}
@@ -359,7 +360,7 @@ namespace Objects.Atmospherics
 		{
 			if (canisterTier > 0)
 			{
-				GasContainer.GasMix *= Mathf.Pow(10, canisterTier);
+				GasContainer.GasMix.MultiplyGas(Mathf.Pow(10, canisterTier));
 				canisterTierOverlay.ChangeSprite(canisterTier - 1); // Tier 0 has no overlay.
 			}
 		}
@@ -375,6 +376,9 @@ namespace Objects.Atmospherics
 
 		public void MergeCanisterAndTank()
 		{
+			//Check for inserted tank
+			if(HasContainerInserted == false) return;
+
 			GasContainer canisterTank = GetComponent<GasContainer>();
 			GasContainer externalTank = InsertedContainer.GetComponent<GasContainer>();
 			GasMix canisterGas = canisterTank.GasMix;

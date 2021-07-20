@@ -5,10 +5,11 @@ using Electricity.Inheritance;
 using Mirror;
 using UnityEngine;
 using Systems.Electricity;
+using Core.Input_System.InteractionV2.Interactions;
 
-namespace Lighting
+namespace Objects.Lighting
 {
-	public class LightSwitchV2 : SubscriptionController, ICheckedInteractable<HandApply>, IAPCPowered, ISetMultitoolMaster
+	public class LightSwitchV2 : SubscriptionController, ICheckedInteractable<HandApply>, IAPCPowerable, ISetMultitoolMaster, ICheckedInteractable<AiActivate>
 	{
 		public List<LightSource> listOfLights;
 
@@ -28,27 +29,28 @@ namespace Lighting
 		[SerializeField]
 		private SpriteRenderer spriteRenderer = null;
 
-		private PowerStates powerState = PowerStates.On;
+		private PowerState powerState = PowerState.On;
 
-		[SerializeField]
-		private MultitoolConnectionType conType = MultitoolConnectionType.LightSwitch;
-		public MultitoolConnectionType ConType  => conType;
-
-		private bool multiMaster = true;
-		public bool MultiMaster => multiMaster;
-
-		public void AddSlave(object SlaveObject)
-		{
-		}
+		#region Lifecycle
 
 		private void Awake()
 		{
 			foreach (var lightSource in listOfLights)
 			{
-				if(lightSource != null)
+				if (lightSource != null)
+				{
 					lightSource.SubscribeToSwitchEvent(this);
+				}
 			}
 		}
+
+		public override void OnStartClient()
+		{
+			base.OnStartClient();
+			SyncState(isOn, isOn);
+		}
+
+		#endregion
 
 		private void SyncState(bool oldState, bool newState)
 		{
@@ -60,7 +62,7 @@ namespace Lighting
 		public void ServerChangeState(bool newState, bool invokeEvent = true)
 		{
 			isOn = newState;
-			if (!invokeEvent) return;
+			if (invokeEvent == false) return;
 			SwitchTriggerEvent?.Invoke(isOn);
 		}
 
@@ -70,56 +72,77 @@ namespace Lighting
 		{
 			if (!DefaultWillInteract.Default(interaction, side)) return false;
 			if (interaction.HandObject != null && interaction.Intent == Intent.Harm) return false;
-			return !isInCoolDown;
+
+			if (isInCoolDown) return false;
+			StartCoroutine(SwitchCoolDown());
+
+			return true;
 		}
 
 		public void ServerPerformInteraction(HandApply interaction)
 		{
-			StartCoroutine(SwitchCoolDown());
-			if (powerState == PowerStates.Off || powerState == PowerStates.LowVoltage) return;
-			ServerChangeState(!isOn);
+			TryInteraction();
 		}
 
 		#endregion
 
-		#region IAPCPowered
-
-		public void PowerNetworkUpdate(float Voltage)
+		private void TryInteraction()
 		{
-
+			if (powerState == PowerState.Off || powerState == PowerState.LowVoltage) return;
+			ServerChangeState(!isOn);
 		}
 
-		public void StateUpdate(PowerStates State)
+		#region Ai Interaction
+
+		public bool WillInteract(AiActivate interaction, NetworkSide side)
 		{
-			if (!isServer) return;
-			switch (State)
+			if (interaction.ClickType != AiActivate.ClickTypes.NormalClick) return false;
+
+			if (DefaultWillInteract.AiActivate(interaction, side) == false) return false;
+
+			if (isInCoolDown) return false;
+
+			//Trigger client cooldown only, or else it will break for local host
+			if (CustomNetworkManager.IsServer == false)
 			{
-				case PowerStates.On:
-					ServerChangeState(true,invokeEvent:false);
-					powerState = State;
+				StartCoroutine(SwitchCoolDown());
+			}
+
+			return true;
+		}
+
+		public void ServerPerformInteraction(AiActivate interaction)
+		{
+			//Start server cooldown
+			StartCoroutine(SwitchCoolDown());
+			TryInteraction();
+		}
+
+		#endregion
+
+		#region IAPCPowerable
+
+		public void PowerNetworkUpdate(float voltage) { }
+
+		public void StateUpdate(PowerState state)
+		{
+			if (isServer == false) return;
+			switch (state)
+			{
+				case PowerState.OverVoltage:
+				case PowerState.On:
+					ServerChangeState(true, invokeEvent: false);
+					powerState = state;
 					break;
-				case PowerStates.LowVoltage:
-					ServerChangeState(false,invokeEvent:false);
-					powerState = State;
-					break;
-				case PowerStates.OverVoltage:
-					ServerChangeState(true,invokeEvent:false);
-					powerState = State;
-					break;
+				case PowerState.LowVoltage:
 				default:
-					ServerChangeState(false,invokeEvent:false);
-					powerState = State;
+					ServerChangeState(false, invokeEvent: false);
+					powerState = state;
 					break;
 			}
 		}
 
 		#endregion
-
-		public override void OnStartClient()
-		{
-			base.OnStartClient();
-			SyncState(isOn, isOn);
-		}
 
 		private IEnumerator SwitchCoolDown()
 		{
@@ -128,20 +151,32 @@ namespace Lighting
 			isInCoolDown = false;
 		}
 
+		#region ISetMultitoolMaster
+
+		[SerializeField]
+		private MultitoolConnectionType conType = MultitoolConnectionType.LightSwitch;
+		public MultitoolConnectionType ConType => conType;
+
+		private bool multiMaster = true;
+		public bool MultiMaster => multiMaster;
+
+		public void AddSlave(object slaveObject) { }
+
+		#endregion
+
 		#region Editor
 
-		void OnDrawGizmosSelected()
+		private void OnDrawGizmosSelected()
 		{
 			var sprite = GetComponentInChildren<SpriteRenderer>();
-			if (sprite == null)
-				return;
+			if (sprite == null) return;
 
-			//Highlighting all controlled lightSources
+			// Highlighting all controlled lightSources
 			Gizmos.color = new Color(1, 1, 0, 1);
 			for (int i = 0; i < listOfLights.Count; i++)
 			{
 				var lightSource = listOfLights[i];
-				if(lightSource == null) continue;
+				if (lightSource == null) continue;
 				Gizmos.DrawLine(sprite.transform.position, lightSource.transform.position);
 				Gizmos.DrawSphere(lightSource.transform.position, 0.25f);
 			}
@@ -177,6 +212,5 @@ namespace Lighting
 		}
 
 		#endregion
-
 	}
 }

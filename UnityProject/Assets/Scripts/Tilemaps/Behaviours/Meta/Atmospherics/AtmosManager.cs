@@ -5,6 +5,7 @@ using Pipes;
 using UnityEngine;
 using UnityEngine.SceneManagement;
 using Objects.Wallmounts;
+using System.Collections.Concurrent;
 
 namespace Systems.Atmospherics
 {
@@ -20,13 +21,12 @@ namespace Systems.Atmospherics
 
 		public bool Running { get; private set; }
 
-		public bool roundStartedServer = false;
 		public HashSet<PipeData> inGameNewPipes = new HashSet<PipeData>();
 		public HashSet<FireAlarm> inGameFireAlarms = new HashSet<FireAlarm>();
+		private ThreadSafeList<PipeData> pipeList = new ThreadSafeList<PipeData>();
+		private GenericDelegate<PipeData> processPipeDelegator;
+
 		public static int currentTick;
-		public static float tickRateComplete = 0.25f; //currently set to update every second
-		public static float tickRate;
-		private static float tickCount = 0f;
 		private const int Steps = 1;
 
 		public static AtmosManager Instance;
@@ -36,11 +36,11 @@ namespace Systems.Atmospherics
 		public GameObject fireLight = null;
 
 		public GameObject iceShard = null;
-
 		public GameObject hotIce = null;
 
 		private void Awake()
 		{
+			processPipeDelegator = ProcessPipe;
 			if (Instance == null)
 			{
 				Instance = this;
@@ -66,77 +66,62 @@ namespace Systems.Atmospherics
 					throw;
 				}
 			}
-
-			if (roundStartedServer)
-			{
-				if (tickRate == 0)
-				{
-					tickRate = tickRateComplete / Steps;
-				}
-
-				tickCount += Time.deltaTime;
-
-				if (tickCount > tickRate)
-				{
-					DoTick();
-					tickCount = 0f;
-					currentTick = ++currentTick % Steps;
-				}
-			}
 		}
 
-		void DoTick()
+		public void DoTick()
 		{
 			if (StopPipes == false)
 			{
-				foreach (var p in inGameNewPipes)
-				{
-					p.TickUpdate();
-				}
+				pipeList.Iterate(processPipeDelegator);
 			}
 
-			foreach (FireAlarm firealarm in inGameFireAlarms)
-			{
-				firealarm.TickUpdate();
-			}
+			currentTick = ++currentTick % Steps;
+		}
+
+		private void ProcessPipe(PipeData pipeData)
+		{
+			pipeData.TickUpdate();
+		}
+
+		public void AddPipe(PipeData pipeData)
+		{
+			pipeList.Add(pipeData);
+		}
+
+		public void RemovePipe(PipeData pipeData)
+		{
+			pipeList.Remove(pipeData);
 		}
 
 		void OnEnable()
 		{
-			EventManager.AddHandler(EVENT.RoundStarted, OnRoundStart);
-			EventManager.AddHandler(EVENT.RoundEnded, OnRoundEnd);
+			EventManager.AddHandler(Event.PostRoundStarted, OnPostRoundStart);
+			EventManager.AddHandler(Event.RoundEnded, OnRoundEnd);
 			SceneManager.activeSceneChanged += OnSceneChange;
 		}
 
 		void OnDisable()
 		{
-			EventManager.RemoveHandler(EVENT.RoundStarted, OnRoundStart);
-			EventManager.RemoveHandler(EVENT.RoundEnded, OnRoundEnd);
+			EventManager.RemoveHandler(Event.PostRoundStarted, OnPostRoundStart);
+			EventManager.RemoveHandler(Event.RoundEnded, OnRoundEnd);
 			SceneManager.activeSceneChanged -= OnSceneChange;
 		}
 
-		void OnRoundStart()
+		void OnPostRoundStart()
 		{
 			if (Mode != AtmosMode.Manual)
 			{
 				StartSimulation();
 			}
-			StartCoroutine(SetPipes());
-		}
-
-		private IEnumerator SetPipes() /// TODO: FIX ALL MANAGERS LOADING ORDER AND REMOVE ANY WAITFORSECONDS
-		{
-			yield return new WaitForSeconds(2);
-			roundStartedServer = true;
 		}
 
 		void OnRoundEnd()
 		{
-			roundStartedServer = false;
+			GasReactions.ResetReactionList();
 			AtmosThread.ClearAllNodes();
 			inGameNewPipes.Clear();
+			StopSimulation();
 		}
-
 
 		private void OnApplicationQuit()
 		{
@@ -177,10 +162,6 @@ namespace Systems.Atmospherics
 
 		void OnSceneChange(Scene oldScene, Scene newScene)
 		{
-			if (newScene.name == "Lobby")
-			{
-				roundStartedServer = false;
-			}
 			inGameNewPipes.Clear();
 			inGameFireAlarms.Clear();
 		}

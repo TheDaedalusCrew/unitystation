@@ -68,12 +68,12 @@ namespace Systems.Scenes
 
 		private void OnEnable()
 		{
-			EventManager.AddHandler(EVENT.RoundStarted, SpawnLavaLand);
+			EventManager.AddHandler(Event.ScenesLoadedServer, SpawnLavaLand);
 		}
 
 		private void OnDisable()
 		{
-			EventManager.RemoveHandler(EVENT.RoundStarted, SpawnLavaLand);
+			EventManager.RemoveHandler(Event.ScenesLoadedServer, SpawnLavaLand);
 		}
 
 		public void SpawnLavaLand()
@@ -94,16 +94,16 @@ namespace Systems.Scenes
 				script.numR = Random.Range(1, 7);
 				script.DoSim();
 			}
-
+			yield return null;
 			tileChangeManager = MatrixManager.Instance.lavaLandMatrix.transform.parent.GetComponent<TileChangeManager>();
 
 			GenerateStructures();
-
+			yield return null;
 			MatrixManager.Instance.lavaLandMatrix.transform.parent.GetComponent<OreGenerator>().RunOreGenerator();
 
 			SetQuantumPads();
 
-			Debug.Log("Finished generating LavaLand");
+			Logger.Log("Finished generating LavaLand", Category.Round);
 
 			yield break;
 		}

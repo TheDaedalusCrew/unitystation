@@ -1,79 +1,68 @@
 ﻿using Mirror;
-using Newtonsoft.Json;
 using UnityEngine;
 
-namespace Assets.Scripts.Messages.Server.SoundMessages
+namespace Messages.Server.SoundMessages
 {
 	/// <summary>
 	/// Message that will change the Audio Source Parameters for a sound.
 	/// </summary>
-	public class ChangeAudioSourceParametersMessage : ServerMessage
+	public class ChangeAudioSourceParametersMessage : ServerMessage<ChangeAudioSourceParametersMessage.NetMessage>
 	{
-		// Name of the sound to change Audio Source Parameters.
-		public string SoundName;
-
-		// AudioSourceParameters to apply
-		public AudioSourceParameters AudioSourceParameters;
-		
-		public override void Process()
+		public struct NetMessage : NetworkMessage
 		{
-			SoundManager.ChangeAudioSourceParameters(SoundName, AudioSourceParameters);
+			// SoundSpawn Token to change Audio Source Parameters.
+			public string SoundSpawnToken;
+
+			// AudioSourceParameters to apply
+			public AudioSourceParameters AudioSourceParameters;
+
+			public override string ToString()
+			{
+				string audioSourceParametersValue = AudioSourceParameters.ToString();
+				return $"{nameof(SoundSpawnToken)}: {SoundSpawnToken}, {nameof(AudioSourceParameters)}: {audioSourceParametersValue}";
+			}
+		}
+
+		public override void Process(NetMessage msg)
+		{
+			SoundManager.ChangeAudioSourceParameters(msg.SoundSpawnToken, msg.AudioSourceParameters);
 		}
 
 		/// <summary>
 		/// Send to a specific client to change the Audio Source Parameters of a playing sound
 		/// </summary>
 		/// <param name="recipient">The recipient of the message to be sent.</param>
-		/// <param name="soundName">The name of the sound.</param>
+		/// <param name="soundSpawnToken">The token that identifies the SoundSpawn uniquely among the server and all clients </param>
 		/// <param name="audioSourceParameters">The Audio Source Parameters to apply.</param>
 		/// <returns>The sent message</returns>
-		public static ChangeAudioSourceParametersMessage Send(GameObject recipient, string soundName, AudioSourceParameters audioSourceParameters)
+		public static NetMessage Send(GameObject recipient, string soundSpawnToken, AudioSourceParameters audioSourceParameters)
 		{
-			ChangeAudioSourceParametersMessage msg = new ChangeAudioSourceParametersMessage
+			NetMessage msg = new NetMessage
 			{
-				SoundName = soundName,
+				SoundSpawnToken = soundSpawnToken,
 				AudioSourceParameters = audioSourceParameters
 			};
 
-			msg.SendTo(recipient);
+			SendTo(recipient, msg);
 			return msg;
 		}
 
 		/// <summary>
 		/// Send to all client to change the mixer of a playing sound
 		/// </summary>
-		/// <param name="soundName">The name of the sound.</param>
+		/// <param name="soundSpawnToken">The token that identifies the SoundSpawn uniquely among the server and all clients </param>
 		/// <param name="audioSourceParameters">The Audio Source Parameters to apply.</param>
 		/// <returns>The sent message</returns>
-		public static ChangeAudioSourceParametersMessage SendToAll(string soundName, AudioSourceParameters audioSourceParameters)
+		public static NetMessage SendToAll(string soundSpawnToken, AudioSourceParameters audioSourceParameters)
 		{
-			ChangeAudioSourceParametersMessage msg = new ChangeAudioSourceParametersMessage
+			NetMessage msg = new NetMessage
 			{
-				SoundName = soundName,
+				SoundSpawnToken = soundSpawnToken,
 				AudioSourceParameters = audioSourceParameters
 			};
 
-			msg.SendToAll();
-
+			SendToAll(msg);
 			return msg;
-		}
-
-		public override string ToString()
-		{
-			string audioSourceParametersValue = (AudioSourceParameters == null) ? "Null" : AudioSourceParameters.ToString();
-			return $"{nameof(SoundName)}: {SoundName}, {nameof(AudioSourceParameters)}: {audioSourceParametersValue}";
-		}
-
-		public override void Serialize(NetworkWriter writer)
-		{
-			writer.WriteString(SoundName);
-			writer.WriteString(JsonConvert.SerializeObject(AudioSourceParameters));
-		}
-
-		public override void Deserialize(NetworkReader reader)
-		{
-			SoundName = reader.ReadString();
-			AudioSourceParameters = JsonConvert.DeserializeObject<AudioSourceParameters>(reader.ReadString());
 		}
 	}
 }

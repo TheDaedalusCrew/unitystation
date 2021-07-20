@@ -4,12 +4,13 @@ using UnityEngine;
 using UnityEngine.UI;
 using System;
 using DatabaseAPI;
+using Messages.Client.VariableViewer;
 using TMPro;
 
 public class GUI_P_Input : PageElement
 {
 	public override PageElementEnum PageElementType => PageElementEnum.InputField;
-	public InputFieldFocus TInputField;
+	public TMP_InputField TInputField;
 
 	public override bool IsThisType(Type TType)
 	{
